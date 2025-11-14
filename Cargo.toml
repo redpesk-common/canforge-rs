@@ -2,6 +2,7 @@
 
 members = [
     "dbcparser",
+    "dbcparser-cli",
 ]
 
 resolver = "2"
