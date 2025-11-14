@@ -1,0 +1,593 @@
+/*
+ * Copyright (C) 2018 Marcel Buesing (MIT License)
+ * Origin: https://github.com/marcelbuesing/can-dbc
+ *
+ * Adaptation (2022) to Redpesk and LibAfb model
+ * Author: Fulup Ar Foll <fulup@iot.bzh>
+ *
+ * License: $RP_BEGIN_LICENSE$ SPDX:MIT https://opensource.org/licenses/MIT $RP_END_LICENSE$
+ */
+
+use crate::parser::dbc_from_str;
+use std::fs::File;
+use std::io;
+use std::io::prelude::*;
+
+use std::fmt;
+
+#[derive(Debug)] // ← add this
+pub struct DbcError<'a> {
+    pub uid: &'static str,
+    pub info: String,
+    pub error: Error<'a>,
+}
+
+impl fmt::Display for Error<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Incomplete(s) => write!(f, "incomplete input: {s}"),
+            Error::Parsing(msg) => write!(f, "parse error: {msg}"),
+            Error::MultipleMultiplexors => write!(f, "multiple multiplexors not supported"),
+            Error::System(s) => write!(f, "system error: {s}"),
+            Error::Misc => write!(f, "misc error"),
+        }
+    }
+}
+
+impl fmt::Display for DbcError<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "uid:{}, info:{}", self.uid, self.info)
+    }
+}
+
+impl std::error::Error for Error<'_> {}
+
+/// Parser error kinds.
+#[derive(Debug)] // ← and this
+pub enum Error<'a> {
+    /// Remaining string; the `DbcObject` was only read partially.
+    /// Occurs when, e.g., an unexpected symbol appears.
+    Incomplete(&'a str),
+
+    /// Parser failed.
+    Parsing(String),
+
+    /// Can't look up multiplexors because the message uses extended multiplexing.
+    MultipleMultiplexors,
+
+    /// System-level error.
+    System(&'static str),
+
+    /// Miscellaneous error.
+    Misc,
+}
+
+pub trait MsgCodeGen<T> {
+    /// Generate the code for one message.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_code_message(&self, code: T) -> io::Result<()>;
+    /// Generate the CAN/DBC message definition.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_can_dbc_message(&self, code: T) -> io::Result<()>;
+
+    /// Generate the CAN/DBC impl section.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_can_dbc_impl(&self, code: T) -> io::Result<()>;
+}
+
+pub trait SigCodeGen<T> {
+    /// Generate code for a signal.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_code_signal(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate code to build an "any" CAN frame.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_can_any_frame(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate code to build a standard CAN frame.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_can_std_frame(&self, code: T, msg: &Message) -> io::Result<()>;
+    //fn gen_can_mux_frame(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate the signal trait.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_signal_trait(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate min/max helpers from DBC.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_dbc_min_max(&self, code: T, msg: &Message) -> io::Result<()>;
+
+    /// Generate signal impl.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_signal_impl(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate signal enum.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_signal_enum(&self, code: T, msg: &Message) -> io::Result<()>;
+}
+
+/// Baudrate of network in kbit/s
+#[derive(Copy, Clone)]
+pub struct Baudrate(pub u64);
+
+/// One or multiple signals are the payload of a CAN frame.
+/// To determine the actual value of a signal the following fn applies:
+/// `let fnvalue = |can_signal_value| -> can_signal_value * factor + offset;`
+#[derive(Clone, Debug)]
+pub struct Signal {
+    pub name: String,
+    pub multiplexer_indicator: MultiplexIndicator,
+    pub start_bit: u64,
+    pub size: u64,
+    pub byte_order: ByteOrder,
+    pub value_type: ValueType,
+    pub factor: f64,
+    pub offset: f64,
+    pub min: f64,
+    pub max: f64,
+    pub unit: String,
+    pub receivers: Vec<String>,
+}
+
+/// CAN id in header of CAN frame.
+/// Must be unique in `DbcObject` file.
+#[derive(Copy, Clone)]
+pub struct MessageId(pub u32);
+impl MessageId {
+    #[must_use]
+    pub fn to_u32(&self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub enum Transmitter {
+    /// node transmitting the message
+    NodeName(String),
+    /// message has no sender
+    VectorXXX,
+}
+
+#[derive(Clone)]
+pub struct MessageTransmitter {
+    pub message_id: MessageId,
+    pub transmitter: Vec<Transmitter>,
+}
+
+/// Version generated by DB editor
+#[derive(Clone)]
+pub struct Version(pub String);
+
+#[derive(Clone)]
+pub struct Symbol(pub String);
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum MultiplexIndicator {
+    /// Multiplexor switch
+    Multiplexor,
+    /// Signal us being multiplexed by the multiplexer switch.
+    MultiplexedSignal(u64),
+    /// Signal us being multiplexed by the multiplexer switch and itself is a multiplexor
+    MultiplexorAndMultiplexedSignal(u64),
+    /// Normal signal
+    Plain,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum ByteOrder {
+    LittleEndian,
+    BigEndian,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum ValueType {
+    Signed,
+    Unsigned,
+}
+
+#[derive(Copy, Clone)]
+pub enum EnvType {
+    EnvTypeFloat,
+    EnvTypeu64,
+    EnvTypeData,
+}
+
+#[derive(Clone)]
+pub struct SignalType {
+    pub signal_type_name: String,
+    pub size: u64,
+    pub byte_order: ByteOrder,
+    pub value_type: ValueType,
+    pub factor: f64,
+    pub offset: f64,
+    pub min: f64,
+    pub max: f64,
+    pub unit: String,
+    pub default_value: f64,
+    pub value_table: String,
+}
+
+#[derive(Copy, Clone)]
+pub enum AccessType {
+    DummyNodeVector0,
+    DummyNodeVector1,
+    DummyNodeVector2,
+    DummyNodeVector3,
+}
+
+#[derive(Clone)]
+pub enum AccessNode {
+    AccessNodeVectorXXX,
+    AccessNodeName(String),
+}
+
+#[derive(Clone)]
+pub enum SignalAttributeValue {
+    Text(String),
+    Int(i64),
+}
+
+#[derive(Clone)]
+pub enum AttributeValuedForObjectType {
+    RawAttributeValue(AttributeValue),
+    NetworkNodeAttributeValue(String, AttributeValue),
+    MessageDefinitionAttributeValue(MessageId, Option<AttributeValue>),
+    SignalAttributeValue(MessageId, String, AttributeValue),
+    EnvVariableAttributeValue(String, AttributeValue),
+}
+
+#[derive(Clone)]
+pub enum AttributeValueType {
+    AttributeValueTypeInt(i64, i64),
+    AttributeValueTypeHex(i64, i64),
+    AttributeValueTypeFloat(f64, f64),
+    AttributeValueTypeString,
+    AttributeValueTypeEnum(Vec<String>),
+}
+
+#[derive(Clone)]
+pub struct ValDescription {
+    pub a: f64,
+    pub b: String,
+}
+
+#[derive(Clone)]
+pub enum AttributeValue {
+    AttributeValueU64(u64),
+    AttributeValueI64(i64),
+    AttributeValueF64(f64),
+    AttributeValueCharString(String),
+}
+
+/// Global value table
+#[derive(Clone)]
+pub struct ValueTable {
+    pub value_table_name: String,
+    pub value_descriptions: Vec<ValDescription>,
+}
+
+/// Mapping between multiplexors and multiplexed signals
+#[derive(Clone)]
+pub struct ExtendedMultiplexMapping {
+    pub min_value: u64,
+    pub max_value: u64,
+}
+/// Mapping between multiplexors and multiplexed signals
+#[derive(Clone)]
+pub struct ExtendedMultiplex {
+    pub message_id: MessageId,
+    pub signal_name: String,
+    pub multiplexor_signal_name: String,
+    pub mappings: Vec<ExtendedMultiplexMapping>,
+}
+
+/// Object comments
+#[derive(Clone)]
+pub enum Comment {
+    Node { node_name: String, comment: String },
+    Message { message_id: MessageId, comment: String },
+    Signal { message_id: MessageId, signal_name: String, comment: String },
+    EnvVar { env_var_name: String, comment: String },
+    Plain { comment: String },
+}
+
+/// CAN message (frame) details including signal details
+#[derive(Clone)]
+pub struct Message {
+    /// CAN id in header of CAN frame.
+    /// Must be unique in `DbcObject` file.
+    pub id: MessageId,
+    pub name: String,
+    pub size: u64,
+    pub transmitter: Transmitter,
+    pub signals: Vec<Signal>,
+}
+
+#[derive(Clone)]
+pub struct EnvironmentVariable {
+    pub env_var_name: String,
+    pub env_var_type: EnvType,
+    pub min: i64,
+    pub max: i64,
+    pub unit: String,
+    pub initial_value: f64,
+    pub ev_id: i64,
+    pub access_type: AccessType,
+    pub access_nodes: Vec<AccessNode>,
+}
+
+#[derive(Clone)]
+pub struct EnvironmentVariableData {
+    pub env_var_name: String,
+    pub data_size: u64,
+}
+
+/// CAN network nodes, names must be unique
+#[derive(Clone)]
+pub struct Node(pub Vec<String>);
+
+#[derive(Clone)]
+pub struct AttributeDefault {
+    pub attribute_name: String,
+    pub attribute_value: AttributeValue,
+}
+
+#[derive(Clone)]
+pub struct AttributeValueForObject {
+    pub attribute_name: String,
+    pub attribute_value: AttributeValuedForObjectType,
+}
+
+#[derive(Clone)]
+pub enum AttributeDefinition {
+    // TODO add properties
+    Message(String),
+    // TODO add properties
+    Node(String),
+    // TODO add properties
+    Signal(String),
+    EnvironmentVariable(String),
+    // TODO figure out name
+    Plain(String),
+}
+
+/// Encoding for signal raw values.
+#[derive(Clone)]
+pub enum ValueDescription {
+    Signal { message_id: MessageId, signal_name: String, value_descriptions: Vec<ValDescription> },
+    EnvironmentVariable { env_var_name: String, value_descriptions: Vec<ValDescription> },
+}
+
+#[derive(Clone)]
+pub struct SignalTypeRef {
+    pub message_id: MessageId,
+    pub signal_name: String,
+    pub signal_type_name: String,
+}
+
+/// Signal groups define a group of signals within a message
+#[derive(Clone)]
+pub struct SignalGroups {
+    pub message_id: MessageId,
+    pub signal_group_name: String,
+    pub repetitions: u64,
+    pub signal_names: Vec<String>,
+}
+
+#[derive(Copy, Clone)]
+pub enum SignalExtendedValueType {
+    SignedOrUnsignedInteger, // 0
+    IEEEfloat32Bit,          // 1
+    IEEEdouble64bit,         // 2
+    Reserved3,               // 3 (for compat)
+}
+
+#[derive(Clone)]
+pub struct SignalExtendedValueTypeList {
+    pub message_id: MessageId,
+    pub signal_name: String,
+    pub signal_extended_value_type: SignalExtendedValueType,
+}
+
+#[derive(Clone)]
+pub struct DbcObject {
+    /// Version generated by DB editor
+    pub version: Version,
+    pub new_symbols: Vec<Symbol>,
+    /// Baud rate of network
+    pub bit_timing: Option<Vec<Baudrate>>,
+    /// CAN network nodes
+    pub nodes: Vec<Node>,
+    /// Global value table
+    pub value_tables: Vec<ValueTable>,
+    /// CAN message (frame) details including signal details
+    pub messages: Vec<Message>,
+    //pub messages: HashMap<u32, Message>,
+    pub message_transmitters: Vec<MessageTransmitter>,
+    pub environment_variables: Vec<EnvironmentVariable>,
+    pub environment_variable_data: Vec<EnvironmentVariableData>,
+    pub signal_types: Vec<SignalType>,
+    /// Object comments
+    pub comments: Vec<Comment>,
+    pub attribute_definitions: Vec<AttributeDefinition>,
+    // undefined
+    // sigtype_attr_list: SigtypeAttrList,
+    pub attribute_defaults: Vec<AttributeDefault>,
+    pub attribute_values: Vec<AttributeValueForObject>,
+    /// Encoding for signal raw values
+    pub value_descriptions: Vec<ValueDescription>,
+    // obsolete + undefined
+    // category_definitions: Vec<CategoryDefinition>,
+    // obsolete + undefined
+    //categories: Vec<Category>,
+    // obsolete + undefined
+    //filter: Vec<Filter>,
+    pub signal_type_refs: Vec<SignalTypeRef>,
+    /// Signal groups define a group of signals within a message
+    pub signal_groups: Vec<SignalGroups>,
+    pub signal_extended_value_type_list: Vec<SignalExtendedValueTypeList>,
+    /// Extended multiplex attributes
+    pub extended_multiplex: Vec<ExtendedMultiplex>,
+}
+
+impl DbcObject {
+    /// Load a DBC object from a file path.
+    ///
+    /// # Panics
+    /// Panics if file metadata cannot be read (`metadata().unwrap()`).
+    ///
+    /// # Errors
+    /// Returns an error if the file cannot be opened/read or the DBC content is invalid.
+    pub fn from_file(dbcpath: &str) -> Result<DbcObject, DbcError<'_>> {
+        let filename = Box::leak(dbcpath.to_owned().into_boxed_str()) as &'static str;
+        let dbc_buffer = || -> Result<Vec<u8>, io::Error> {
+            let mut fd = File::open(filename)?;
+            // was: Vec::with_capacity(size as usize);
+            let size = fd.metadata().unwrap().len();
+            let mut buffer = Vec::with_capacity(usize::try_from(size).unwrap_or(usize::MAX));
+            fd.read_to_end(&mut buffer)?;
+            Ok(buffer)
+        };
+
+        match dbc_buffer() {
+            Err(error) => {
+                Err(DbcError { uid: filename, error: Error::Misc, info: error.to_string() })
+            },
+            Ok(buffer) => {
+                let slice = buffer.leak();
+                let data = std::str::from_utf8(slice).unwrap();
+                dbc_from_str(data)
+            },
+        }
+    }
+    /// Parse a DBC object from a UTF-8 string.
+    ///
+    /// # Errors
+    /// Returns an error if the DBC content cannot be parsed.
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(dbc_buffer: &str) -> Result<DbcObject, DbcError<'_>> {
+        dbc_from_str(dbc_buffer)
+    }
+
+    #[must_use]
+    pub fn signal_by_name(&self, message_id: MessageId, signal_name: &str) -> Option<&Signal> {
+        let message = self.messages.iter().find(|message| message.id.0 == message_id.0);
+
+        if let Some(message) = message {
+            return message.signals.iter().find(|signal| signal.name == *signal_name);
+        }
+        None
+    }
+
+    #[must_use]
+    pub fn message_comment(&self, message_id: MessageId) -> Option<&str> {
+        self.comments.iter().find_map(|x| match x {
+            Comment::Message { message_id: x_message_id, comment } => {
+                if x_message_id.0 == message_id.0 {
+                    Some(comment.as_str())
+                } else {
+                    None
+                }
+            },
+            _ => None,
+        })
+    }
+
+    #[must_use]
+    pub fn signal_comment(&self, message_id: MessageId, signal_name: &str) -> Option<&str> {
+        self.comments.iter().find_map(|x| match x {
+            Comment::Signal { message_id: x_message_id, signal_name: x_signal_name, comment } => {
+                if x_message_id.0 == message_id.0 && x_signal_name == signal_name {
+                    Some(comment.as_str())
+                } else {
+                    None
+                }
+            },
+            _ => None,
+        })
+    }
+
+    #[must_use]
+    pub fn value_descriptions_for_signal(
+        &self,
+        message_id: MessageId,
+        signal_name: &str,
+    ) -> Option<&[ValDescription]> {
+        self.value_descriptions.iter().find_map(|x| match x {
+            ValueDescription::Signal {
+                message_id: x_message_id,
+                signal_name: x_signal_name,
+                value_descriptions,
+            } => {
+                if x_message_id.0 == message_id.0 && x_signal_name == signal_name {
+                    Some(value_descriptions.as_slice())
+                } else {
+                    None
+                }
+            },
+            ValueDescription::EnvironmentVariable { .. } => None,
+        })
+    }
+
+    #[must_use]
+    pub fn extended_value_type_for_signal(
+        &self,
+        message_id: MessageId,
+        signal_name: &str,
+    ) -> Option<&SignalExtendedValueType> {
+        self.signal_extended_value_type_list.iter().find_map(|x| {
+            let SignalExtendedValueTypeList {
+                message_id: x_message_id,
+                signal_name: x_signal_name,
+                signal_extended_value_type,
+            } = x;
+            if x_message_id.0 == message_id.0 && x_signal_name == signal_name {
+                Some(signal_extended_value_type)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Lookup the message multiplexor switch signal for a given message.
+    /// This does not work for extended multiplexed messages; if multiple multiplexors
+    /// are defined for a message an `Error` is returned.
+    ///
+    /// # Errors
+    /// Returns `Err(Error::MultipleMultiplexors)` when the message uses extended
+    /// multiplexing (i.e., multiple multiplexors are defined).
+    pub fn message_multiplexor_switch(
+        &self,
+        message_id: MessageId,
+    ) -> Result<Option<&Signal>, Error<'_>> {
+        let message = self.messages.iter().find(|message| message.id.0 == message_id.0);
+
+        if let Some(message) = message {
+            if self.extended_multiplex.iter().any(|ext_mp| ext_mp.message_id.0 == message_id.0) {
+                Err(Error::MultipleMultiplexors)
+            } else {
+                Ok(message
+                    .signals
+                    .iter()
+                    .find(|signal| signal.multiplexer_indicator == MultiplexIndicator::Multiplexor))
+            }
+        } else {
+            Ok(None)
+        }
+    }
+}

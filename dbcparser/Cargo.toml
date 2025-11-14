@@ -1,0 +1,22 @@
+[package]
+name = "lib_dbcparser"
+authors = ["fulup@iot.bzh"]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+nom = { version = "7", features = ["alloc"] }
+heck = "0.4"
+
+[lib]
+name = "dbcparser"
+path = "src/dbc-lib.rs"
+
+[[example]]
+name = "model3"
+path = "examples/model3/main.rs"
+
+[[example]]
+name = "bms"
+path = "examples/bms/main.rs"

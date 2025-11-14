@@ -1,0 +1,65 @@
+# .pre-commit-config.yaml
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^examples/.*/etc/(dbc|candump)/.*\.(dbc|log)$
+      - id: end-of-file-fixer
+        exclude: ^examples/.*/etc/(dbc|candump)/.*\.(dbc|log)$
+      - id: mixed-line-ending
+        args: [--fix=lf]
+        exclude: ^examples/.*/etc/(dbc|candump)/.*\.(dbc|log)$
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      # formatting (fast) -> on every commit
+      - id: cargo-fmt
+        name: cargo fmt --check
+        entry: bash -lc 'cargo fmt --all -- --check'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      # linting (a bit slower) -> on every commit
+      - id: cargo-clippy
+        name: cargo clippy -D warnings
+        entry: bash -lc 'cargo clippy --workspace --all-targets --all-features -- -D warnings'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      # tests (fast) -> on every commit
+      # compile & run unit tests for libs/binaries in the workspace
+      - id: cargo-test-fast
+        name: cargo test (fast)
+        entry: bash -lc 'RUST_BACKTRACE=1 cargo test --workspace --all-features --lib --bins --quiet'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      # security & policy (slower) -> on push only
+      - id: cargo-deny
+        name: cargo deny check licenses
+        entry: bash -lc 'cargo deny check licenses'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: cargo-audit
+        name: cargo audit
+        entry: bash -lc 'cargo audit'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      # tests (full) -> on push only
+      # 1) all targets (lib, bins, examples, tests, benches); 2) doctests
+      - id: cargo-test-full
+        name: cargo test (full)
+        entry: bash -lc 'set -euo pipefail; RUST_BACKTRACE=1 cargo test --workspace --all-features --all-targets --no-fail-fast -- --nocapture; cargo test --workspace --all-features --doc --no-fail-fast -- --nocapture'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
