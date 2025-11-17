@@ -5,12 +5,12 @@ repos:
     rev: v4.6.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^examples/.*/etc/(dbc|candump)/.*\.(dbc|log)$
+        exclude: ^dbcparser/examples/.*/dbc/.*.dbc$
       - id: end-of-file-fixer
-        exclude: ^examples/.*/etc/(dbc|candump)/.*\.(dbc|log)$
+        exclude: ^dbcparser/examples/.*/dbc/.*.dbc$
       - id: mixed-line-ending
         args: [--fix=lf]
-        exclude: ^examples/.*/etc/(dbc|candump)/.*\.(dbc|log)$
+        exclude: ^dbcparser/examples/.*/dbc/.*.dbc$
       - id: check-merge-conflict
 
   - repo: local
@@ -35,7 +35,7 @@ repos:
       # compile & run unit tests for libs/binaries in the workspace
       - id: cargo-test-fast
         name: cargo test (fast)
-        entry: bash -lc 'RUST_BACKTRACE=1 cargo test --workspace --all-features --lib --bins --quiet'
+        entry: bash -lc 'RUST_BACKTRACE=1 cargo test --workspace --all-features --all-targets --quiet'
         language: system
         pass_filenames: false
         stages: [pre-commit]

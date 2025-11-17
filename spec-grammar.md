@@ -1,15 +1,15 @@
 # DBC file grammar specification
 
-This document describes the structure and grammar used by the DBC parser (`dbcparser` crate).  
+This document describes the structure and grammar used by the DBC parser (`dbcparser` crate).
 The goal is to provide a human-readable and machine-oriented specification that reflects the real-world DBC format (as produced by Vector tools and reverse-engineered by the open-source community).
 
 ---
 
 ## 1. Overview
 
-DBC files describe messages, signals, and metadata used in CAN communication systems.  
-They follow a line-oriented text format with ASCII encoding (occasionally containing UTF-8 comments).  
-Each section begins with a keyword followed by one or more arguments separated by spaces.  
+DBC files describe messages, signals, and metadata used in CAN communication systems.
+They follow a line-oriented text format with ASCII encoding (occasionally containing UTF-8 comments).
+Each section begins with a keyword followed by one or more arguments separated by spaces.
 Comments start with `//` and extend to the end of the line.
 
 A typical DBC file contains:
@@ -96,7 +96,7 @@ VERSION "1.0"
 
 ```
 
-Defines the version of the DBC format or tool that generated it.  
+Defines the version of the DBC format or tool that generated it.
 Usually ignored by most parsers but required by the spec.
 
 ---
@@ -115,7 +115,7 @@ NS_:
 
 ```
 
-Declares the types of entries used in this DBC file.  
+Declares the types of entries used in this DBC file.
 The list is informational and not mandatory for parsing.
 
 ---
@@ -128,8 +128,8 @@ BS_: 125000
 
 ```
 
-Defines the CAN bit timing information (baud rate).  
-Often empty (`BS_:` alone).  
+Defines the CAN bit timing information (baud rate).
+Often empty (`BS_:` alone).
 This section is optional.
 
 ---
@@ -142,7 +142,7 @@ BU_: ECU1 ECU2 ECU3
 
 ```
 
-Lists all ECU nodes (transmitters and receivers).  
+Lists all ECU nodes (transmitters and receivers).
 Nodes can be referenced later in `BO_` and `SG_` lines.
 
 ---
@@ -283,7 +283,7 @@ Rarely used, defines environment variables shared between ECUs.
 
 ## 6. Common irregularities in real-world files
 
-The DBC standard is inconsistently followed.  
+The DBC standard is inconsistently followed.
 Real-world files may contain:
 
 - Extra spaces between tokens.
@@ -354,16 +354,16 @@ VAL_ 100 ExampleSignal 0 "Off" 1 "On";
 
 ## 10. References
 
-- Vector DBC File Format (unofficial reverse-engineered spec):  
+- Vector DBC File Format (unofficial reverse-engineered spec):
   <https://www.csselectronics.com/pages/can-dbc-file-database-intro>
 
-- BusMaster DBC specification (open-source):  
+- BusMaster DBC specification (open-source):
   <https://raw.githubusercontent.com/rbei-etas/busmaster-documents/master/help.pdf>
 
-- CANdb++ user documentation excerpts:  
+- CANdb++ user documentation excerpts:
   <https://cdn.vector.com/cms/content/products/candb/Docs/CANdb_Manual_EN.pdf>
 
-- ISO 11898-1 (for CAN frame semantics):  
+- ISO 11898-1 (for CAN frame semantics):
   <https://www.iso.org/standard/63648.html>
 
 ---

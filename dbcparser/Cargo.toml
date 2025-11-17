@@ -9,14 +9,24 @@ license = "MIT"
 nom = { version = "7", features = ["alloc"] }
 heck = "0.4"
 
+[features]
+default = []
+internal-parser-tests = []
+
 [lib]
 name = "dbcparser"
-path = "src/dbc-lib.rs"
+path = "src/lib.rs"
 
-[[example]]
-name = "model3"
-path = "examples/model3/main.rs"
+#[[example]]
+#name = "model3"
+#path = "examples/model3/main.rs"
 
-[[example]]
-name = "bms"
-path = "examples/bms/main.rs"
+#[[example]]
+#name = "bms"
+#path = "examples/bms/main.rs"
+
+[[test]]
+name = "tests"
+path = "tests/test.rs"
+harness = true
+required-features = ["internal-parser-tests"]

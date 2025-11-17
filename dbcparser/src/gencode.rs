@@ -108,21 +108,28 @@ unsafe extern "C" {
     pub fn localtime(__timer: *const TimeT) -> *mut tm;
 }
 
-// return Linux current date/time as a string
-pub fn get_ctime(format: &str) -> Result<String, ()> {
-    let fmt = match CString::new(format) {
-        Err(_err) => return Err(()),
-        Ok(value) => value,
-    };
-    let time = unsafe { time(std::ptr::null_mut::<TimeT>()) };
-    let locale = unsafe { localtime(&raw const time) };
+/// Return Linux current date/time as a string formatted with `strftime` syntax.
+///
+/// # Errors
+/// Returns an [`io::Error`] if the format string is invalid or the system call fails.
+pub fn get_ctime(format: &str) -> io::Result<String> {
+    let fmt = CString::new(format)
+        .map_err(|_| io::Error::other("invalid format string (CString::new)"))?;
+
+    let time_val = unsafe { time(std::ptr::null_mut::<TimeT>()) };
+    let locale = unsafe { localtime(&raw const time_val) };
+
     let mut buffer = [0_i8; 64];
-    unsafe { strftime(buffer.as_mut_ptr(), buffer.len(), fmt.as_ptr(), locale) };
+    let res = unsafe { strftime(buffer.as_mut_ptr(), buffer.len(), fmt.as_ptr(), locale) };
+    if res == 0 {
+        return Err(io::Error::other("strftime() returned 0"));
+    }
+
     let cstring = unsafe { CStr::from_ptr(buffer.as_ptr()) };
-    let slice = match cstring.to_str() {
-        Err(_err) => return Err(()),
-        Ok(value) => value,
-    };
+    let slice = cstring
+        .to_str()
+        .map_err(|_| io::Error::other("failed to convert CStr to str"))?;
+
     Ok(slice.to_owned())
 }
 

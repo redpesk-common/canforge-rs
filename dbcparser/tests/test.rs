@@ -8,30 +8,32 @@
  * License: $RP_BEGIN_LICENSE$ SPDX:MIT https://opensource.org/licenses/MIT $RP_END_LICENSE$
  */
 
-use super::dbcparse_mod::*;
+// use super::dbcparse_mod::*;
 
+//#![cfg(feature = "internal-parser-tests")]
 
-use std::str;
+//use std::str;
 
-use nom::{
-    branch::{alt, permutation},
-    bytes::complete::{tag, take_till, take_while, take_while1},
-    character::complete::{self, char, line_ending, multispace0, space0, space1},
-    combinator::{map, opt, value},
-    Error::{ErrorKind, ParseError},
-    multi::{many0, many_till, separated_list0},
-    number::complete::double,
-    sequence::preceded,
-    AsChar, IResult, InputTakeAtPosition,
+// Tous les TYPES viennent du modèle domaine = crate::ir
+use dbcparser::data::{
+    AccessNode, AccessType, AttributeDefault, AttributeDefinition, AttributeValue,
+    AttributeValueForObject, AttributeValuedForObjectType, ByteOrder, Comment, EnvType,
+    EnvironmentVariable, EnvironmentVariableData, ExtendedMultiplex, ExtendedMultiplexMapping,
+    MessageId, MessageTransmitter, MultiplexIndicator, Node, SignalExtendedValueType,
+    SignalExtendedValueTypeList, SignalGroups, SignalType, Symbol, Transmitter, ValDescription,
+    ValueDescription, ValueTable, ValueType, Version,
 };
 
-use crate::{
-    AccessNode, AccessType, AttributeDefault, AttributeDefinition, AttributeValue,
-    AttributeValueForObject, AttributeValuedForObjectType, Baudrate, ByteOrder, Comment, EnvType,
-    EnvironmentVariable, EnvironmentVariableData, ExtendedMultiplex, ExtendedMultiplexMapping,
-    Message, MessageId, MessageTransmitter, MultiplexIndicator, Node, Signal,
-    SignalExtendedValueType, SignalExtendedValueTypeList, SignalGroups, SignalType, SignalTypeRef,
-    Symbol, Transmitter, ValDescription, ValueDescription, ValueTable, ValueType, Version, DBC,
+//use dbcparser::data::DBC;
+
+#[cfg(feature = "internal-parser-tests")]
+use dbcparser::test_api::{
+    attribute_default, attribute_definition, attribute_value, attribute_value_for_object,
+    byte_order, c_ident, c_ident_vec, char_string, comment, environment_variable,
+    environment_variable_data, extended_multiplex, message, message_transmitter,
+    multiplexer_indicator, new_symbols, node, signal, signal_extended_value_type_list,
+    signal_groups, signal_type, value_description, value_descriptions, value_table, value_type,
+    version,
 };
 
 #[cfg(test)]
@@ -64,10 +66,7 @@ mod tests {
         let cid_vec = "FZHL_DUSasb19,xkask_3298 ";
         let (_, cid2) = c_ident_vec(cid_vec).unwrap();
 
-        assert_eq!(
-            vec!("FZHL_DUSasb19".to_string(), "xkask_3298".to_string()),
-            cid2
-        );
+        assert_eq!(vec!("FZHL_DUSasb19".to_string(), "xkask_3298".to_string()), cid2);
     }
 
     #[test]
@@ -108,10 +107,7 @@ mod tests {
 
         let (_, multiplexer) =
             multiplexer_indicator(" m8M eol").expect("Failed to parse multiplexer");
-        assert_eq!(
-            MultiplexIndicator::MultiplexorAndMultiplexedSignal(8),
-            multiplexer
-        );
+        assert_eq!(MultiplexIndicator::MultiplexorAndMultiplexedSignal(8), multiplexer);
     }
 
     #[test]
@@ -147,10 +143,7 @@ mod tests {
     fn message_definition_comment_test() {
         let def1 = "CM_ BO_ 34544 \"Some Message comment\";\n";
         let message_id = MessageId(34544);
-        let comment1 = Comment::Message {
-            message_id,
-            comment: "Some Message comment".to_string(),
-        };
+        let comment1 = Comment::Message { message_id, comment: "Some Message comment".to_string() };
         let (_, comment1_def) =
             comment(def1).expect("Failed to parse message definition comment definition");
         assert_eq!(comment1, comment1_def);
@@ -183,10 +176,7 @@ mod tests {
         let def1 = "VAL_ 837 UF_HZ_OI 255 \"NOP\";\n";
         let message_id = MessageId(837);
         let signal_name = "UF_HZ_OI".to_string();
-        let val_descriptions = vec![ValDescription {
-            a: 255.0,
-            b: "NOP".to_string(),
-        }];
+        let val_descriptions = vec![ValDescription { a: 255.0, b: "NOP".to_string() }];
         let value_description_for_signal1 = ValueDescription::Signal {
             message_id,
             signal_name,
@@ -201,10 +191,7 @@ mod tests {
     fn value_description_for_env_var_test() {
         let def1 = "VAL_ MY_ENV_VAR 255 \"NOP\";\n";
         let env_var_name = "MY_ENV_VAR".to_string();
-        let val_descriptions = vec![ValDescription {
-            a: 255.0,
-            b: "NOP".to_string(),
-        }];
+        let val_descriptions = vec![ValDescription { a: 255.0, b: "NOP".to_string() }];
         let value_env_var1 = ValueDescription::EnvironmentVariable {
             env_var_name,
             value_descriptions: val_descriptions,
@@ -226,7 +213,7 @@ mod tests {
             initial_value: 3.0,
             ev_id: 7,
             access_type: AccessType::DummyNodeVector0,
-            access_nodes: vec![AccessNode::AccessNodeVectorXXX],
+            access_nodes: vec![AccessNode::AccessNodeName("VECTOR_XXX".to_string())],
         };
         let (_, env_var) =
             environment_variable(def1).expect("Failed to parse environment variable");
@@ -240,10 +227,8 @@ mod tests {
             "NodeName".to_string(),
             AttributeValue::AttributeValueF64(12.0),
         );
-        let attr_val_exp = AttributeValueForObject {
-            attribute_name: "AttrName".to_string(),
-            attribute_value,
-        };
+        let attr_val_exp =
+            AttributeValueForObject { attribute_name: "AttrName".to_string(), attribute_value };
         let (_, attr_val) = attribute_value_for_object(def).unwrap();
         assert_eq!(attr_val_exp, attr_val);
     }
@@ -255,10 +240,8 @@ mod tests {
             MessageId(298),
             Some(AttributeValue::AttributeValueF64(13.0)),
         );
-        let attr_val_exp = AttributeValueForObject {
-            attribute_name: "AttrName".to_string(),
-            attribute_value,
-        };
+        let attr_val_exp =
+            AttributeValueForObject { attribute_name: "AttrName".to_string(), attribute_value };
         let (_, attr_val) = attribute_value_for_object(def).unwrap();
         assert_eq!(attr_val_exp, attr_val);
     }
@@ -271,10 +254,8 @@ mod tests {
             "SGName".to_string(),
             AttributeValue::AttributeValueF64(13.0),
         );
-        let attr_val_exp = AttributeValueForObject {
-            attribute_name: "AttrName".to_string(),
-            attribute_value,
-        };
+        let attr_val_exp =
+            AttributeValueForObject { attribute_name: "AttrName".to_string(), attribute_value };
         let (_, attr_val) = attribute_value_for_object(def).unwrap();
         assert_eq!(attr_val_exp, attr_val);
     }
@@ -286,10 +267,8 @@ mod tests {
             "EvName".to_string(),
             AttributeValue::AttributeValueCharString("CharStr".to_string()),
         );
-        let attr_val_exp = AttributeValueForObject {
-            attribute_name: "AttrName".to_string(),
-            attribute_value,
-        };
+        let attr_val_exp =
+            AttributeValueForObject { attribute_name: "AttrName".to_string(), attribute_value };
         let (_, attr_val) = attribute_value_for_object(def).unwrap();
         assert_eq!(attr_val_exp, attr_val);
     }
@@ -300,10 +279,8 @@ mod tests {
         let attribute_value = AttributeValuedForObjectType::RawAttributeValue(
             AttributeValue::AttributeValueCharString("RAW".to_string()),
         );
-        let attr_val_exp = AttributeValueForObject {
-            attribute_name: "AttrName".to_string(),
-            attribute_value,
-        };
+        let attr_val_exp =
+            AttributeValueForObject { attribute_name: "AttrName".to_string(), attribute_value };
         let (_, attr_val) = attribute_value_for_object(def).unwrap();
         assert_eq!(attr_val_exp, attr_val);
     }
@@ -328,12 +305,7 @@ mod tests {
     #[test]
     fn network_node_test() {
         let def = "BU_: ZU XYZ ABC OIU\n";
-        let nodes = vec![
-            "ZU".to_string(),
-            "XYZ".to_string(),
-            "ABC".to_string(),
-            "OIU".to_string(),
-        ];
+        let nodes = vec!["ZU".to_string(), "XYZ".to_string(), "ABC".to_string(), "OIU".to_string()];
         let (_, node) = node(def).unwrap();
         let node_exp = Node(nodes);
         assert_eq!(node_exp, node);
@@ -352,10 +324,8 @@ mod tests {
     fn envvar_data_test() {
         let def = "ENVVAR_DATA_ SomeEnvVarData: 399;\n";
         let (_, envvar_data) = environment_variable_data(def).unwrap();
-        let envvar_data_exp = EnvironmentVariableData {
-            env_var_name: "SomeEnvVarData".to_string(),
-            data_size: 399,
-        };
+        let envvar_data_exp =
+            EnvironmentVariableData { env_var_name: "SomeEnvVarData".to_string(), data_size: 399 };
         assert_eq!(envvar_data_exp, envvar_data);
     }
 
@@ -365,7 +335,7 @@ mod tests {
 
         let exp = SignalType {
             signal_type_name: "signal_type_name".to_string(),
-            signal_size: 1024,
+            size: 1024,
             byte_order: ByteOrder::LittleEndian,
             value_type: ValueType::Unsigned,
             factor: 5.0,
@@ -464,10 +434,7 @@ mod tests {
     #[test]
     fn value_description_test() {
         let def = "2 \"ABC\"\n";
-        let exp = ValDescription {
-            a: 2f64,
-            b: "ABC".to_string(),
-        };
+        let exp = ValDescription { a: 2f64, b: "ABC".to_string() };
         let (_, val_desc) = value_description(def).unwrap();
         assert_eq!(exp, val_desc);
     }
@@ -478,14 +445,8 @@ mod tests {
         let exp = ValueTable {
             value_table_name: "Tst".to_string(),
             value_descriptions: vec![
-                ValDescription {
-                    a: 2f64,
-                    b: "ABC".to_string(),
-                },
-                ValDescription {
-                    a: 1f64,
-                    b: "Test A".to_string(),
-                },
+                ValDescription { a: 2f64, b: "ABC".to_string() },
+                ValDescription { a: 1f64, b: "Test A".to_string() },
             ],
         };
         let (_, val_table) = value_table(def).unwrap();
@@ -497,10 +458,7 @@ mod tests {
         let def = "VAL_TABLE_ Tst 2 \"ABC\";\n";
         let exp = ValueTable {
             value_table_name: "Tst".to_string(),
-            value_descriptions: vec![ValDescription {
-                a: 2f64,
-                b: "ABC".to_string(),
-            }],
+            value_descriptions: vec![ValDescription { a: 2f64, b: "ABC".to_string() }],
         };
         let (_, val_table) = value_table(def).unwrap();
         assert_eq!(exp, val_table);
@@ -514,10 +472,7 @@ mod tests {
             message_id: MessageId(2147483650),
             signal_name: "muxed_A_1".to_string(),
             multiplexor_signal_name: "MUX_A".to_string(),
-            mappings: vec![ExtendedMultiplexMapping {
-                min_value: 1,
-                max_value: 1,
-            }],
+            mappings: vec![ExtendedMultiplexMapping { min_value: 1, max_value: 1 }],
         };
         let (_, ext_multiplex) = extended_multiplex(def).unwrap();
         assert_eq!(exp, ext_multiplex);
@@ -528,10 +483,7 @@ mod tests {
             message_id: MessageId(2147483650),
             signal_name: "muxed_A_1".to_string(),
             multiplexor_signal_name: "MUX_A".to_string(),
-            mappings: vec![ExtendedMultiplexMapping {
-                min_value: 1568,
-                max_value: 2568,
-            }],
+            mappings: vec![ExtendedMultiplexMapping { min_value: 1568, max_value: 2568 }],
         };
         let (_, ext_multiplex) = extended_multiplex(def).unwrap();
         assert_eq!(exp, ext_multiplex);
@@ -543,14 +495,8 @@ mod tests {
             signal_name: "muxed_B_5".to_string(),
             multiplexor_signal_name: "MUX_B".to_string(),
             mappings: vec![
-                ExtendedMultiplexMapping {
-                    min_value: 5,
-                    max_value: 5,
-                },
-                ExtendedMultiplexMapping {
-                    min_value: 16,
-                    max_value: 24,
-                },
+                ExtendedMultiplexMapping { min_value: 5, max_value: 5 },
+                ExtendedMultiplexMapping { min_value: 16, max_value: 24 },
             ],
         };
         let (_, ext_multiplex) = extended_multiplex(def).unwrap();

@@ -1,7 +1,8 @@
 extern crate dbcparser;
 
 use anyhow::{anyhow, Context, Result};
-use clap::Parser;
+use clap::builder::BoolishValueParser;
+use clap::{ArgAction, Parser};
 use dbcparser::prelude::*;
 use std::fs;
 
@@ -75,7 +76,12 @@ struct Cli {
     no_header: bool,
 
     /// Enable/disable serde_json in generated types
-    #[arg(long = "serde-json", default_value_t = true)]
+    #[arg(
+    long = "serde-json",
+    default_value_t = true,
+    action = ArgAction::Set,                 // accept a value
+    value_parser = BoolishValueParser::new() // true/false, yes/no, on/off, 1/0
+    )]
     serde_json: bool,
 
     /// Whitelist CAN IDs (CSV, hex 0xABC or decimal): e.g. "0x101,0x121,201"

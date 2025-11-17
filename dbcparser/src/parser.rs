@@ -80,7 +80,7 @@ fn is_quote(chr: char) -> bool {
 ///   or `multispace0`.
 ///
 /// # Examples
-/// ```ignore
+/// ```
 /// // Consomme uniquement les espaces ' ' en tête (pas les tabs/newlines) :
 /// // assert_eq!(ms0::<_, NomError<&str>>("   BO_"), Ok(("BO_", "   ")));
 /// // assert_eq!(ms0::<_, NomError<&str>>("\t BO_"), Ok(("\t BO_", ""))); // le tab n'est pas consommé
@@ -120,7 +120,7 @@ where
 ///   whitespace handling.
 ///
 /// # Examples
-/// ```ignore
+/// ```
 /// // Exige au moins un espace ASCII ' ' (pas de tab/newline) :
 /// // assert_eq!(ms1::<_, NomError<&str>>("   BO_"), Ok(("BO_", "   ")));
 /// // assert!(ms1::<_, NomError<&str>>("BO_").is_err());    // au moins un espace requis
@@ -193,17 +193,17 @@ fn brk_close(s: &str) -> IResult<&str, char> {
 
 /// A valid `C_identifier`. `C_identifier` start with a  alphacharacter or an underscore
 /// and may further consist of alpha­numeric, characters and underscore
-fn c_ident(s: &str) -> IResult<&str, String> {
+pub fn c_ident(s: &str) -> IResult<&str, String> {
     let (s, head) = take_while1(is_c_ident_head)(s)?;
     let (s, remaining) = take_while(is_c_string_char)(s)?;
     Ok((s, [head, remaining].concat()))
 }
 
-fn c_ident_vec(s: &str) -> IResult<&str, Vec<String>> {
+pub fn c_ident_vec(s: &str) -> IResult<&str, Vec<String>> {
     separated_list0(comma, c_ident)(s)
 }
 
-fn char_string(s: &str) -> IResult<&str, &str> {
+pub fn char_string(s: &str) -> IResult<&str, &str> {
     let (s, _) = quote(s)?;
     let (s, char_string_value) = take_till(is_quote)(s)?;
     let (s, _) = quote(s)?;
@@ -218,7 +218,7 @@ fn big_endian(s: &str) -> IResult<&str, ByteOrder> {
     map(char('0'), |_| ByteOrder::BigEndian)(s)
 }
 
-fn byte_order(s: &str) -> IResult<&str, ByteOrder> {
+pub fn byte_order(s: &str) -> IResult<&str, ByteOrder> {
     alt((little_endian, big_endian))(s)
 }
 
@@ -234,7 +234,7 @@ fn unsigned(s: &str) -> IResult<&str, ValueType> {
     map(char('+'), |_| ValueType::Unsigned)(s)
 }
 
-fn value_type(s: &str) -> IResult<&str, ValueType> {
+pub fn value_type(s: &str) -> IResult<&str, ValueType> {
     alt((signed, unsigned))(s)
 }
 
@@ -267,7 +267,7 @@ fn plain(s: &str) -> IResult<&str, MultiplexIndicator> {
     Ok((s, MultiplexIndicator::Plain))
 }
 
-fn multiplexer_indicator(s: &str) -> IResult<&str, MultiplexIndicator> {
+pub fn multiplexer_indicator(s: &str) -> IResult<&str, MultiplexIndicator> {
     alt((multiplexer, multiplexor, multiplexor_and_multiplexed, plain))(s)
 }
 
@@ -279,7 +279,7 @@ fn multiplexer_indicator(s: &str) -> IResult<&str, MultiplexIndicator> {
 /// ```
 ///
 /// Returns `Version(String)`.
-fn version(s: &str) -> IResult<&str, Version> {
+pub fn version(s: &str) -> IResult<&str, Version> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("VERSION")(s)?;
     let (s, _) = ms1(s)?;
@@ -296,7 +296,7 @@ fn bit_timing(s: &str) -> IResult<&str, Vec<Baudrate>> {
     Ok((s, baudrates.unwrap_or_default()))
 }
 
-fn signal(s: &str) -> IResult<&str, Signal> {
+pub fn signal(s: &str) -> IResult<&str, Signal> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("SG_")(s)?;
     let (s, _) = ms1(s)?;
@@ -356,7 +356,7 @@ fn signal(s: &str) -> IResult<&str, Signal> {
 ///
 /// Uses `cut()` after `BO_` and header fields to reduce backtracking
 /// and improve error messages.
-fn message(s: &str) -> IResult<&str, Message> {
+pub fn message(s: &str) -> IResult<&str, Message> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("BO_")(s)?;
     let (s, _) = ms1(s)?;
@@ -375,7 +375,7 @@ fn message(s: &str) -> IResult<&str, Message> {
     ))
 }
 
-fn attribute_default(s: &str) -> IResult<&str, AttributeDefault> {
+pub fn attribute_default(s: &str) -> IResult<&str, AttributeDefault> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("BA_DEF_DEF_")(s)?;
     let (s, _) = ms1(s)?;
@@ -434,7 +434,7 @@ fn comment_plain(s: &str) -> IResult<&str, Comment> {
     Ok((s, Comment::Plain { comment: comment.to_string() }))
 }
 
-fn comment(s: &str) -> IResult<&str, Comment> {
+pub fn comment(s: &str) -> IResult<&str, Comment> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("CM_")(s)?;
     let (s, _) = ms1(s)?;
@@ -445,7 +445,7 @@ fn comment(s: &str) -> IResult<&str, Comment> {
     Ok((s, comment))
 }
 
-fn value_description(s: &str) -> IResult<&str, ValDescription> {
+pub fn value_description(s: &str) -> IResult<&str, ValDescription> {
     let (s, a) = double(s)?;
     let (s, _) = ms1(s)?;
     let (s, b) = char_string(s)?;
@@ -487,7 +487,7 @@ fn value_description_for_env_var(s: &str) -> IResult<&str, ValueDescription> {
     ))
 }
 
-fn value_descriptions(s: &str) -> IResult<&str, ValueDescription> {
+pub fn value_descriptions(s: &str) -> IResult<&str, ValueDescription> {
     let (s, _) = multispace0(s)?;
     let (s, vd) = alt((value_description_for_signal, value_description_for_env_var))(s)?;
     let (s, _) = line_ending(s)?;
@@ -547,7 +547,7 @@ fn access_node(s: &str) -> IResult<&str, AccessNode> {
 }
 
 /// Environment Variable Definitions
-fn environment_variable(s: &str) -> IResult<&str, EnvironmentVariable> {
+pub fn environment_variable(s: &str) -> IResult<&str, EnvironmentVariable> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("EV_")(s)?;
     let (s, _) = ms1(s)?;
@@ -589,7 +589,7 @@ fn environment_variable(s: &str) -> IResult<&str, EnvironmentVariable> {
     ))
 }
 
-fn environment_variable_data(s: &str) -> IResult<&str, EnvironmentVariableData> {
+pub fn environment_variable_data(s: &str) -> IResult<&str, EnvironmentVariableData> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("ENVVAR_DATA_")(s)?;
     let (s, _) = ms1(s)?;
@@ -602,7 +602,7 @@ fn environment_variable_data(s: &str) -> IResult<&str, EnvironmentVariableData> 
     Ok((s, EnvironmentVariableData { env_var_name, data_size }))
 }
 
-fn signal_type(s: &str) -> IResult<&str, SignalType> {
+pub fn signal_type(s: &str) -> IResult<&str, SignalType> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("SGTYPE_")(s)?;
     let (s, _) = ms1(s)?;
@@ -669,7 +669,7 @@ fn attribute_value_charstr(s: &str) -> IResult<&str, AttributeValue> {
     map(char_string, |x| AttributeValue::AttributeValueCharString(x.to_string()))(s)
 }
 
-fn attribute_value(s: &str) -> IResult<&str, AttributeValue> {
+pub fn attribute_value(s: &str) -> IResult<&str, AttributeValue> {
     alt((
         // attribute_value_uint64,
         // attribute_value_int64,
@@ -720,7 +720,7 @@ fn raw_attribute_value(s: &str) -> IResult<&str, AttributeValuedForObjectType> {
     map(attribute_value, AttributeValuedForObjectType::RawAttributeValue)(s)
 }
 
-fn attribute_value_for_object(s: &str) -> IResult<&str, AttributeValueForObject> {
+pub fn attribute_value_for_object(s: &str) -> IResult<&str, AttributeValueForObject> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("BA_")(s)?;
     let (s, _) = ms1(s)?;
@@ -776,7 +776,7 @@ fn attribute_definition_plain(s: &str) -> IResult<&str, AttributeDefinition> {
     Ok((s, AttributeDefinition::Plain(plain.to_string())))
 }
 
-fn attribute_definition(s: &str) -> IResult<&str, AttributeDefinition> {
+pub fn attribute_definition(s: &str) -> IResult<&str, AttributeDefinition> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("BA_DEF_")(s)?;
     let (s, _) = ms1(s)?;
@@ -800,7 +800,7 @@ fn symbol(s: &str) -> IResult<&str, Symbol> {
     Ok((s, Symbol(symbol)))
 }
 
-fn new_symbols(s: &str) -> IResult<&str, Vec<Symbol>> {
+pub fn new_symbols(s: &str) -> IResult<&str, Vec<Symbol>> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("NS_ :")(s)?;
     let (s, _) = space0(s)?;
@@ -810,7 +810,7 @@ fn new_symbols(s: &str) -> IResult<&str, Vec<Symbol>> {
 }
 
 /// Network node
-fn node(s: &str) -> IResult<&str, Node> {
+pub fn node(s: &str) -> IResult<&str, Node> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("BU_:")(s)?;
     let (s, li) = opt(preceded(ms1, separated_list0(ms1, c_ident)))(s)?;
@@ -819,7 +819,7 @@ fn node(s: &str) -> IResult<&str, Node> {
     Ok((s, Node(li.unwrap_or_default())))
 }
 
-fn signal_type_ref(s: &str) -> IResult<&str, SignalTypeRef> {
+pub(crate) fn signal_type_ref(s: &str) -> IResult<&str, SignalTypeRef> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("SGTYPE_")(s)?;
     let (s, _) = ms1(s)?;
@@ -835,7 +835,7 @@ fn signal_type_ref(s: &str) -> IResult<&str, SignalTypeRef> {
     Ok((s, SignalTypeRef { message_id, signal_name, signal_type_name }))
 }
 
-fn value_table(s: &str) -> IResult<&str, ValueTable> {
+pub fn value_table(s: &str) -> IResult<&str, ValueTable> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("VAL_TABLE_")(s)?;
     let (s, _) = ms1(s)?;
@@ -854,7 +854,7 @@ fn extended_multiplex_mapping(s: &str) -> IResult<&str, ExtendedMultiplexMapping
     Ok((s, ExtendedMultiplexMapping { min_value, max_value }))
 }
 
-fn extended_multiplex(s: &str) -> IResult<&str, ExtendedMultiplex> {
+pub fn extended_multiplex(s: &str) -> IResult<&str, ExtendedMultiplex> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("SG_MUL_VAL_")(s)?;
     let (s, _) = ms1(s)?;
@@ -884,7 +884,7 @@ fn signal_extended_value_type(s: &str) -> IResult<&str, SignalExtendedValueType>
     alt((signed_or_unsigned_integer, ieee_float_32bit, ieee_double_64bit))(s)
 }
 
-fn signal_extended_value_type_list(s: &str) -> IResult<&str, SignalExtendedValueTypeList> {
+pub fn signal_extended_value_type_list(s: &str) -> IResult<&str, SignalExtendedValueTypeList> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("SIG_VALTYPE_")(s)?;
     let (s, _) = ms1(s)?;
@@ -916,7 +916,7 @@ fn message_transmitters(s: &str) -> IResult<&str, Vec<Transmitter>> {
     separated_list0(comma, transmitter)(s)
 }
 
-fn message_transmitter(s: &str) -> IResult<&str, MessageTransmitter> {
+pub fn message_transmitter(s: &str) -> IResult<&str, MessageTransmitter> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("BO_TX_BU_")(s)?;
     let (s, _) = ms1(s)?;
@@ -930,7 +930,7 @@ fn message_transmitter(s: &str) -> IResult<&str, MessageTransmitter> {
     Ok((s, MessageTransmitter { message_id, transmitter }))
 }
 
-fn signal_groups(s: &str) -> IResult<&str, SignalGroups> {
+pub fn signal_groups(s: &str) -> IResult<&str, SignalGroups> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("SIG_GROUP_")(s)?;
     let (s, _) = ms1(s)?;
