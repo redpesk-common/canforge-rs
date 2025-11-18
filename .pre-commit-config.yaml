@@ -5,12 +5,12 @@ repos:
     rev: v4.6.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^dbcparser/examples/.*/dbc/.*.dbc$
+        exclude: ^dbcparser.*/examples/.*/dbc/.*.dbc$
       - id: end-of-file-fixer
-        exclude: ^dbcparser/examples/.*/dbc/.*.dbc$
+        exclude: ^dbcparser.*/examples/.*/dbc/.*.dbc$
       - id: mixed-line-ending
         args: [--fix=lf]
-        exclude: ^dbcparser/examples/.*/dbc/.*.dbc$
+        exclude: ^dbcparser.*/examples/.*/dbc/.*.dbc$
       - id: check-merge-conflict
 
   - repo: local

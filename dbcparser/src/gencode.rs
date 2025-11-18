@@ -1234,8 +1234,13 @@ impl DbcParser {
         dbcfd.messages.sort_by(|a, b| a.id.0.cmp(&b.id.0));
 
         if let Some(mut list) = self.whitelist.clone() {
-            list.sort_unstable();
-            dbcfd.messages.retain(|msg| DbcParser::check_list(msg.id, &list));
+            if list.is_empty() {
+                // empty whitelist means "keep everything"
+                dbcfd.messages.retain(|_| true);
+            } else {
+                list.sort_unstable();
+                dbcfd.messages.retain(|msg| DbcParser::check_list(msg.id, &list));
+            }
         }
 
         if let Some(mut list) = self.blacklist.clone() {
@@ -1261,7 +1266,7 @@ impl DbcParser {
         match self.header {
             None => {},
             Some(header) => {
-                code_output!(code, IDT1, header)?;
+                code_output!(code, IDT0, header)?;
             },
         }
 

@@ -17,14 +17,6 @@ internal-parser-tests = []
 name = "dbcparser"
 path = "src/lib.rs"
 
-#[[example]]
-#name = "model3"
-#path = "examples/model3/main.rs"
-
-#[[example]]
-#name = "bms"
-#path = "examples/bms/main.rs"
-
 [[test]]
 name = "tests"
 path = "tests/test.rs"

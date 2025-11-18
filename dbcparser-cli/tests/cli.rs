@@ -138,31 +138,6 @@ BO_ 513 MSG_B: 8 ECU
 }
 
 #[test]
-fn serde_toggle_flag_is_honored() {
-    let tmp = assert_fs::TempDir::new().unwrap();
-    let dbc = tmp.child("in.dbc");
-    dbc.write_str(MIN_DBC).unwrap();
-
-    let out = tmp.child("gen.rs");
-
-    Command::new(bin_path())
-        .args([
-            "-i",
-            dbc.path().to_str().unwrap(),
-            "-o",
-            out.path().to_str().unwrap(),
-            "--serde-json",
-            "false",
-        ])
-        .assert()
-        .success();
-
-    out.assert(predicate::path::exists());
-    // Optionnel: tu peux vérifier l’absence de "serde" dans le code généré
-    out.assert(predicate::str::contains("serde").not());
-}
-
-#[test]
 fn rejects_bad_whitelist_value() {
     let tmp = assert_fs::TempDir::new().unwrap();
     let dbc = tmp.child("in.dbc");

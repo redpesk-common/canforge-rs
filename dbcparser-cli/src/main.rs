@@ -1,10 +1,11 @@
 extern crate dbcparser;
 
 use anyhow::{anyhow, Context, Result};
-use clap::builder::BoolishValueParser;
-use clap::{ArgAction, Parser};
+use clap::Parser;
 use dbcparser::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::Path;
 
 /// En-tête par défaut (celui de ton exemple)
 const DEFAULT_HEADER: &str = r#"
@@ -31,6 +32,17 @@ const DEFAULT_HEADER: &str = r#"
 )]
 "#;
 
+#[derive(Debug, Deserialize, Serialize)]
+struct OptionParser {
+    infile: String,
+    outfile: String,
+    uid: String,
+    header_file: Option<String>,
+    no_header: bool,
+    whitelist: Option<String>,
+    blacklist: Option<String>,
+}
+
 /// Parse une liste d'identifiants CAN sous forme "0x101,0x121,289" etc.
 /// Accepte hex (avec/ sans 0x) et décimal, séparés par virgules/espaces.
 fn parse_id_list(input: &str) -> Result<Vec<u32>> {
@@ -51,17 +63,18 @@ fn parse_id_list(input: &str) -> Result<Vec<u32>> {
     }
     Ok(out)
 }
+
 /// CLI
 #[derive(Debug, Parser)]
 #[command(name = "dbc-gen", version, about = "Generate Rust code from a DBC file")]
 struct Cli {
-    /// Input DBC file (required)
-    #[arg(short = 'i', long = "in", value_name = "INFILE", required = true)]
-    infile: String,
+    /// Input DBC file (required unless a YAML config is provided)
+    #[arg(short = 'i', long = "in", value_name = "INFILE", required_unless_present = "config")]
+    infile: Option<String>,
 
-    /// Output Rust file path (required)
-    #[arg(short = 'o', long = "out", value_name = "OUTFILE", required = true)]
-    outfile: String,
+    /// Output Rust file path (required unless a YAML config is provided)
+    #[arg(short = 'o', long = "out", value_name = "OUTFILE", required_unless_present = "config")]
+    outfile: Option<String>,
 
     /// Optional UID (module/namespace root in generated code)
     #[arg(long, default_value = "DbcSimple")]
@@ -75,15 +88,6 @@ struct Cli {
     #[arg(long = "no-header", default_value_t = false)]
     no_header: bool,
 
-    /// Enable/disable serde_json in generated types
-    #[arg(
-    long = "serde-json",
-    default_value_t = true,
-    action = ArgAction::Set,                 // accept a value
-    value_parser = BoolishValueParser::new() // true/false, yes/no, on/off, 1/0
-    )]
-    serde_json: bool,
-
     /// Whitelist CAN IDs (CSV, hex 0xABC or decimal): e.g. "0x101,0x121,201"
     #[arg(long = "whitelist")]
     whitelist: Option<String>,
@@ -91,23 +95,64 @@ struct Cli {
     /// Blacklist CAN IDs (CSV, hex 0xABC or decimal): e.g. "0x101,0x121,201"
     #[arg(long = "blacklist")]
     blacklist: Option<String>,
+
+    /// Load parameters from a YAML configuration file
+    #[arg(long = "config", value_name = "YAML")]
+    config: Option<String>,
+
+    /// Save the effective parameters to this YAML file
+    #[arg(long = "save-config", value_name = "YAML")]
+    save_config: Option<String>,
+
+    /// Verbose mode: print effective configuration as YAML
+    #[arg(short = 'v', long = "verbose")]
+    verbose: bool,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Build effective options:
+    // - If --config is provided: load from YAML
+    // - Otherwise: use CLI values
+    let options: OptionParser = if let Some(cfg_path) = &cli.config {
+        let cfg_str = fs::read_to_string(cfg_path)
+            .with_context(|| format!("cannot read config file: {cfg_path}"))?;
+        serde_yaml::from_str(&cfg_str)
+            .with_context(|| format!("invalid YAML configuration in {cfg_path}"))?
+    } else {
+        OptionParser {
+            infile: cli
+                .infile
+                .clone()
+                .expect("clap guarantees infile is provided when config is not"),
+            outfile: cli
+                .outfile
+                .clone()
+                .expect("clap guarantees outfile is provided when config is not"),
+            uid: cli.uid.clone(),
+            header_file: cli.header_file.clone(),
+            no_header: cli.no_header,
+            whitelist: cli.whitelist.clone(),
+            blacklist: cli.blacklist.clone(),
+        }
+    };
     // Optionnel: validations supplémentaires (ex. existence du fichier d’entrée)
-    if !std::path::Path::new(&cli.infile).exists() {
-        return Err(anyhow!("input file does not exist: {}", cli.infile));
+    if !Path::new(&options.infile).exists() {
+        return Err(anyhow!("input file does not exist: {}", options.infile));
     }
 
-    let whitelist = if let Some(s) = &cli.whitelist { parse_id_list(s)? } else { Vec::new() };
+    // Parse whitelist / blacklist from the *effective* options
+    let whitelist_ids =
+        if let Some(s) = &options.whitelist { parse_id_list(s)? } else { Vec::new() };
 
-    let blacklist = if let Some(s) = &cli.blacklist { parse_id_list(s)? } else { Vec::new() };
+    let blacklist_ids =
+        if let Some(s) = &options.blacklist { parse_id_list(s)? } else { Vec::new() };
 
-    let header: &'static str = if cli.no_header {
+    // Resolve header text
+    let header: &'static str = if options.no_header {
         ""
-    } else if let Some(path) = &cli.header_file {
+    } else if let Some(path) = &options.header_file {
         fs::read_to_string(path)
             .with_context(|| format!("cannot read header file: {path}"))?
             .leak()
@@ -115,17 +160,36 @@ fn main() -> Result<()> {
         DEFAULT_HEADER
     };
 
-    DbcParser::new(Box::leak(cli.uid.into_boxed_str()))
-        .dbcfile(&cli.infile)
-        .outfile(&cli.outfile)
+    // Verbose mode + optional save-config
+    if cli.verbose || cli.save_config.is_some() {
+        let yaml =
+            serde_yaml::to_string(&options).context("failed to serialize options to YAML")?;
+
+        if let Some(path) = &cli.save_config {
+            fs::write(path, &yaml)
+                .with_context(|| format!("cannot write configuration YAML to {path}"))?;
+            eprintln!("Configuration saved to YAML: {path}");
+        }
+
+        if cli.verbose {
+            eprintln!("Effective configuration (YAML):\n{yaml}");
+        }
+    }
+
+    // uid has to be 'static for DbcParser, so we leak it on purpose
+    let uid_static: &'static str = Box::leak(options.uid.clone().into_boxed_str());
+
+    DbcParser::new(uid_static)
+        .dbcfile(&options.infile)
+        .outfile(&options.outfile)
         .header(header)
         .range_check(true)
-        .serde_json(cli.serde_json)
-        .whitelist(whitelist)
-        .blacklist(blacklist)
+        .serde_json(true)
+        .whitelist(whitelist_ids)
+        .blacklist(blacklist_ids)
         .generate()
         .map_err(|e| anyhow!("code generation failed: {e}"))?;
 
-    eprintln!("Generated: {}", cli.outfile);
+    eprintln!("Generated: {}", options.outfile);
     Ok(())
 }

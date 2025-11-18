@@ -70,7 +70,6 @@ Options:
       --uid <UID>            Optional UID/root module name [default: DbcSimple]
       --header-file <PATH>   Prepend a custom header text (overrides default)
       --no-header            Disable header emission
-      --serde-json <BOOL>    Enable/disable serde in generated types [default: true]
       --whitelist <LIST>     Allow only these CAN IDs (CSV: 0xABC,201,513)
       --blacklist <LIST>     Exclude these CAN IDs (CSV)
   -h, --help                 Print help
