@@ -1,27 +1,91 @@
 # dbcparser & dbcparser-cli
 
-A fast, modular DBC (CAN database) parser and CLI toolkit written in Rust.
+A pragmatic DBC (CAN database) parser and Rust code generator.
 
-- **dbcparser**: library that tokenizes, parses, validates, and lowers DBC files into a clean IR (domain model).
-- **dbcparser-cli**: command-line utility built on top of the library (parse, validate, generate Rust mappings, etc.).
+- **dbcparser**: library that parses DBC files and exposes a domain model used for code generation.
+- **dbcparser-cli**: command-line tool that generates Rust code from a DBC file, with filtering and configuration support.
 
-> Status: early but test-driven. Public API may evolve.
+> Status: used with real DBC examples, still evolving. Public API and CLI options may change.
+
+---
+
+## Project layout
+
+Matches (roughly) the current repository:
+
+```text
+.
+├── Cargo.toml              # workspace
+├── Cargo.lock
+├── README.md
+├── spec-grammar.md         # DBC grammar notes
+├── CONTRIBUTE.md
+├── deny.toml
+├── rustfmt.toml
+├── .pre-commit-config.yaml
+├── dbcparser/
+│   ├── Cargo.toml
+│   ├── src/
+│   │   ├── lib.rs          # lib root (re-exports parser/data/gencode)
+│   │   ├── parser.rs       # DBC parser (nom-based)
+│   │   ├── data.rs         # domain types (messages, signals, etc.)
+│   │   └── gencode.rs      # Rust code generation
+│   └── tests/
+│       └── test.rs         # integration tests for parser & lib
+└── dbcparser-cli/
+    ├── Cargo.toml
+    ├── src/
+    │   └── main.rs         # CLI: generate Rust from DBC
+    └── tests/
+        ├── cli.rs          # CLI behaviour tests
+        ├── test_bms.rs     # BMS example tests
+        └── test_model3.rs  # Model3 example tests
+```
+
+Example DBC fixtures and generated code live under:
+
+```text
+dbcparser-cli/examples/bms/...
+dbcparser-cli/examples/model3/...
+```
 
 ---
 
 ## Features
 
-- Lexer over `&[u8]` with line/column/span tracking.
-- Grammar parser that produces a minimal **AST**.
-- Validation pass that enforces structural and semantic rules.
-- IR (domain model): `Dbc`, `Message`, `Signal`, `Attribute`, etc.
-- Error model with precise spans and categories (built with `thiserror`).
-- CLI (`dbcparser-cli`) to:
-  - parse/validate a DBC file and print diagnostics,
-  - dump or convert into other formats (JSON, YAML, TOML – planned),
-  - query or filter messages/signals,
-  - compute simple stats,
-  - generate small Rust mapping stubs.
+### Current (implemented)
+
+Library (`dbcparser`):
+
+- DBC parsing into an internal domain model (messages, signals, attributes, etc.).
+- Domain types and helpers in `src/data.rs`.
+- Code generator in `src/gencode.rs` that turns a DBC into Rust modules and types.
+
+CLI (`dbcparser-cli`):
+
+- Generate Rust code from a DBC file:
+  - optional whitelist/blacklist of CAN IDs,
+  - optional header injection (custom file) or header removal,
+  - configuration via YAML file,
+  - ability to save the *effective* configuration to YAML for later reuse,
+  - verbose mode to print the effective configuration as YAML.
+
+Real-world examples:
+
+- BMS DBC: `dbcparser-cli/examples/bms/dbc/BMS.dbc`
+- Model3 DBC: `dbcparser-cli/examples/model3/dbc/model3can.dbc`
+- Generated Rust files for these examples are checked into `examples/`.
+
+### Design goals / roadmap
+
+These are **not fully implemented yet**, but drive the design:
+
+- Clear pipeline: `lexer (&[u8]) → parser (AST) → validator → IR (domain model) → generators`.
+- Precise error model with spans (line/column) and categories, using `thiserror` in the lib and a rich reporter (`color-eyre`/`miette`) in the CLI.
+- Additional CLI subcommands (besides code generation): `parse`, `validate`, `dump`, `convert`, `query`, `stats`, `grep-db`.
+- Optional converters to JSON/YAML/TOML via `serde`.
+- Strong validation rules: overlapping signals, multiplexing, ID uniqueness, value ranges, etc.
+- Fuzzing and benchmarks for robustness and performance.
 
 ---
 
@@ -29,11 +93,10 @@ A fast, modular DBC (CAN database) parser and CLI toolkit written in Rust.
 
 ### Requirements
 
-- **Rust** 1.70+ (stable)
+- **Rust** 1.81+ (stable)
 - Optional developer tools:
   - `cargo-edit`
-  - `cargo-criterion`
-  - `cargo-fuzz` (requires nightly + LLVM tools)
+  - `cargo-deny` (to use `deny.toml`)
 
 ### Clone and build
 
@@ -43,13 +106,13 @@ cd canforge-rs
 cargo build
 ```
 
-To build the CLI only:
+To build only the CLI:
 
 ```bash
 cargo build -p dbcparser-cli
 ```
 
-Run the CLI help:
+Run CLI help:
 
 ```bash
 cargo run -p dbcparser-cli -- --help
@@ -57,91 +120,132 @@ cargo run -p dbcparser-cli -- --help
 
 ---
 
-## CLI usage
+## CLI usage (current)
 
-The CLI binary name is `dbcparser-cli` (you can rename via `[ [bin] ]` if desired).
+The main binary is `dbcparser-cli`.
+It currently focuses on **generating Rust code from a DBC file**.
 
 ```text
-Usage: dbcparser-cli [OPTIONS] --in <INFILE> --out <OUTFILE>
+Generate Rust code from a DBC file
+
+Usage: dbcparser-cli [OPTIONS]
 
 Options:
-  -i, --in <INFILE>          Input DBC file (required)
-  -o, --out <OUTFILE>        Output Rust/print file (required for generator/dumps)
-      --uid <UID>            Optional UID/root module name [default: DbcSimple]
-      --header-file <PATH>   Prepend a custom header text (overrides default)
-      --no-header            Disable header emission
-      --whitelist <LIST>     Allow only these CAN IDs (CSV: 0xABC,201,513)
-      --blacklist <LIST>     Exclude these CAN IDs (CSV)
-  -h, --help                 Print help
-  -V, --version              Print version
+  -i, --in <INFILE>                Input DBC file (required unless a YAML config is provided)
+  -o, --out <OUTFILE>              Output Rust file path (required unless a YAML config is provided)
+      --uid <UID>                  Optional UID (module/namespace root in generated code) [default: DbcSimple]
+      --header-file <HEADER_FILE>  Header text file to prepend (overrides built-in header if provided)
+      --no-header                  Disable default header completely
+      --whitelist <WHITELIST>      Whitelist CAN IDs (CSV, hex 0xABC or decimal): e.g. "0x101,0x121,201"
+      --blacklist <BLACKLIST>      Blacklist CAN IDs (CSV, hex 0xABC or decimal): e.g. "0x101,0x121,201"
+      --config <YAML>              Load parameters from a YAML configuration file
+      --save-config <YAML>         Save the effective parameters to this YAML file
+  -v, --verbose                    Verbose mode: print effective configuration as YAML
+  -h, --help                       Print help
+  -V, --version                    Print version
 ```
 
 ### ID list formats
 
-- Accepts hex with or without `0x` and decimal:
-  - `--whitelist "0x101,0x201,513"`
-  - `--blacklist "0x101,0x200"`
+Whitelist and blacklist options accept:
 
-### Examples
+- hexadecimal with or without `0x`,
+- decimal integers.
 
-Generate a Rust mapping with defaults:
+Examples:
+
+```bash
+--whitelist "0x101,0x121,201"
+--blacklist "0x101,0x200"
+```
+
+### Basic examples
+
+Generate Rust code with defaults:
 
 ```bash
 dbcparser-cli \
-  -i ./dbcparser/examples/demo.dbc \
-  -o ./generated.rs
+  --in dbcparser-cli/examples/bms/dbc/BMS.dbc \
+  --out ./generated_bms.rs
 ```
 
 No header:
 
 ```bash
-dbcparser-cli -i in.dbc -o out.rs --no-header
+dbcparser-cli \
+  --in dbcparser-cli/examples/model3/dbc/model3can.dbc \
+  --out ./generated_model3.rs \
+  --no-header
 ```
 
 Custom header file:
 
 ```bash
-dbcparser-cli -i in.dbc -o out.rs --header-file ./HEADER.txt
-```
-
-Disable serde support in generated code:
-
-```bash
-dbcparser-cli -i in.dbc -o out.rs --serde-json false
+dbcparser-cli \
+  --in dbcparser-cli/examples/bms/dbc/BMS.dbc \
+  --out ./generated_bms.rs \
+  --header-file ./HEADER.txt
 ```
 
 Whitelist and blacklist filtering:
 
 ```bash
-dbcparser-cli -i in.dbc -o out.rs \
+dbcparser-cli \
+  --in dbcparser-cli/examples/model3/dbc/model3can.dbc \
+  --out ./generated_model3_filtered.rs \
   --whitelist "0x101,0x201,513" \
   --blacklist "0x101"
 ```
 
----
+### YAML configuration
 
-## Example DBC
-
-A minimal DBC file the parser can handle:
-
-```text
-VERSION "1.0"
-NS_ :
-BU_: ECU
-BO_ 1 MSG: 8 ECU
-```
-
-Convert it (if converter implemented):
+You can load parameters from a YAML file:
 
 ```bash
-dbcparser-cli convert -i in.dbc --to json
+dbcparser-cli --config ./config.yaml
 ```
+
+And/or save the effective configuration (after CLI parsing) to a YAML file:
+
+```bash
+dbcparser-cli \
+  --in dbcparser-cli/examples/bms/dbc/BMS.dbc \
+  --out ./generated_bms.rs \
+  --whitelist "0x101,0x121" \
+  --save-config ./effective.yaml
+```
+
+Verbose mode prints the effective configuration as YAML to stdout:
+
+```bash
+dbcparser-cli \
+  --config ./config.yaml \
+  --verbose
+```
+
+---
+
+## Library usage (high-level)
+
+The library is available as the `dbcparser` crate within this workspace.
+The internal structure is currently:
+
+- `src/parser.rs` — parsing logic (nom-based).
+- `src/data.rs` — data structures representing messages, signals, attributes, etc.
+- `src/gencode.rs` — code generator using the parsed DBC representation.
+- `src/lib.rs` — crate root, re-exporting the main types and functions.
+
+API details are still evolving; expect breaking changes while the internal design converges toward:
+
+- `Dbc::from_str(&str) -> Result<Dbc, DbcError>`
+- `Dbc::from_reader<R: Read>(R) -> Result<Dbc, DbcError>`
+- iterators over messages/signals, explicit validation, and optional `serde` support.
 
 ---
 
 ## Testing
 
-Run unit and integration tests:
+Run all tests:
 
 ```bash
 cargo test
@@ -159,81 +263,60 @@ Test only the CLI:
 cargo test -p dbcparser-cli
 ```
 
-CLI integration tests use `assert_cmd`, `assert_fs`, and `predicates` to verify:
+The repository includes:
 
-- missing or invalid argument handling,
-- header toggles,
-- whitelist/blacklist parsing,
-- serde flag control.
-
----
-
-## Benchmarks and fuzzing
-
-Criterion benchmarks (if present):
-
-```bash
-cargo bench -p dbcparser
-```
-
-Fuzzing (if configured):
-
-```bash
-# install cargo-fuzz
-cargo fuzz run parse_dbc
-```
+- integration tests for the library in `dbcparser/tests/test.rs`,
+- CLI integration tests in `dbcparser-cli/tests/` using real DBC files (BMS, Model3).
 
 ---
 
 ## Design notes
 
-- **Pipeline**: `lexer → parser (AST) → validator → IR`
-- **Parser**: purely syntactic; no business logic.
-- **Validator**: checks semantic consistency (IDs, nodes, value ranges).
-- **IR**: domain representation independent of DBC syntax.
-- **Error model**: `DbcError` includes line/column span and category.
-- **Extensible**: easy to add new DBC clauses and mappings.
+High-level design direction:
+
+- **Parsing**: `parser.rs` uses `nom` to read DBC files into an internal representation.
+- **Domain model**: `data.rs` holds message/signal/attribute structures used by the generator.
+- **Code generation**: `gencode.rs` transforms the parsed DBC into Rust modules and types.
+- **Future pipeline** (roadmap):
+  `lexer (&[u8]) → parser (AST) → validator → IR (domain model) → generators`.
+
+Validation goals include:
+
+- consistent CAN IDs,
+- non-overlapping bit ranges for signals,
+- consistent multiplexing,
+- sensible value ranges and units.
 
 ---
 
 ## Roadmap
 
-- [ ] Extend grammar coverage for all DBC constructs.
-- [ ] JSON/YAML/TOML converters via optional `serde` feature.
-- [ ] Rich `query` subcommand (filter by ID/name/pattern).
-- [ ] Advanced `stats` command (bit usage, gaps, endianness).
-- [ ] More real-world DBC fixtures for integration tests.
-- [ ] Performance benchmarks on large DBC files.
+Planned improvements (subject to change):
 
----
-
-## Contributing
-
-Contributions and pull requests are welcome!
-Please make sure to run:
-
-```bash
-cargo fmt --all
-cargo clippy --all-targets --all-features
-cargo test --workspace
-```
-
-When adding or modifying grammar rules, include:
-
-- unit tests near the parser function,
-- integration tests in `dbcparser/tests/`,
-- documentation updates in `spec-grammar.md`.
+- [ ] Extend grammar coverage for all DBC constructs (attributes, env vars, etc.).
+- [ ] Introduce a lexer/AST/IR/validator pipeline for clearer separation of concerns.
+- [ ] Add JSON/YAML/TOML converters via optional `serde` feature.
+- [ ] Introduce CLI subcommands:
+  - `parse`: syntax-only parsing with diagnostics,
+  - `validate`: semantic checks and return codes,
+  - `dump`: structured listing,
+  - `convert`: DBC → JSON/YAML,
+  - `stats`: statistics on messages/signals/bit usage,
+  - `grep-db`: search messages/signals by name/attributes.
+- [ ] Add more real-world DBC fixtures for integration tests.
+- [ ] Set up benchmarks and fuzzing for robustness and performance.
 
 ---
 
 ## License
 
-This project is licensed under the **MIT License**.
-See the `LICENSE` file for details.
+This project is licensed under the **MIT License** (or the license indicated in the repository).
+See the `LICENSE` file if present.
 
 ---
 
 ## Acknowledgements
 
-- Based on ideas from open DBC parsers and the `nom` parser combinator library.
-- Thanks to contributors and testers providing real-world DBC samples.
+- Inspired by existing open-source DBC parsers and tools.
+- Built using the Rust ecosystem, in particular `nom` for parsing.
+- Thanks to contributors and users providing real-world DBC samples.
