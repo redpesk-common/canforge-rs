@@ -295,12 +295,10 @@ Planned improvements (subject to change):
 
 - [ ] Extend grammar coverage for all DBC constructs (attributes, env vars, etc.).
 - [ ] Introduce a lexer/AST/IR/validator pipeline for clearer separation of concerns.
-- [ ] Add JSON/YAML/TOML converters via optional `serde` feature.
 - [ ] Introduce CLI subcommands:
   - `parse`: syntax-only parsing with diagnostics,
   - `validate`: semantic checks and return codes,
   - `dump`: structured listing,
-  - `convert`: DBC → JSON/YAML,
   - `stats`: statistics on messages/signals/bit usage,
   - `grep-db`: search messages/signals by name/attributes.
 - [ ] Add more real-world DBC fixtures for integration tests.
