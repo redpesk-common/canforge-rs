@@ -12,7 +12,7 @@ This repository is a Rust workspace that currently provides:
 
 ---
 
-## project layout
+## Project layout
 
 This matches the current repository:
 
@@ -60,9 +60,9 @@ This matches the current repository:
 
 ---
 
-## features
+## Features
 
-### current (implemented)
+### Current (implemented)
 
 Library (`dbcparser`):
 
@@ -90,7 +90,7 @@ Real-world examples:
 - Model3 DBC: `dbcparser-cli/examples/model3/dbc/model3can.dbc`
 - Example code and/or generated Rust files live under `dbcparser-cli/examples/`.
 
-### design goals / roadmap
+### Design goals / roadmap
 
 These are **not fully implemented yet**, but drive the design:
 
@@ -103,9 +103,9 @@ These are **not fully implemented yet**, but drive the design:
 
 ---
 
-## build from source
+## Build from source
 
-### requirements
+### Requirements
 
 - Rust stable (edition 2021)
 
@@ -114,7 +114,7 @@ Optional developer tools:
 - `pre-commit` (recommended if you want local hooks)
 - `cargo-deny` (to use `deny.toml`)
 
-### clone and build
+### Clone and build
 
 ```bash
 git clone https://github.com/redpesk/canforge-rs.git
@@ -181,7 +181,7 @@ Examples:
 --blacklist "0x101,0x200"
 ```
 
-#### basic examples
+#### Basic examples
 
 Generate Rust code with defaults:
 
@@ -255,7 +255,7 @@ The tool is intentionally minimal and is mainly used for checks/demos. For produ
 
 ---
 
-## library usage (high-level)
+## Library usage (high-level)
 
 The library is available as the `dbcparser` crate within this workspace.
 
@@ -274,7 +274,7 @@ API details are still evolving; expect breaking changes while the internal desig
 
 ---
 
-## testing
+## Testing
 
 Run all tests:
 
@@ -301,7 +301,7 @@ The repository includes:
 
 ---
 
-## design notes
+## Design notes
 
 High-level design direction:
 
@@ -320,7 +320,7 @@ Validation goals include:
 
 ---
 
-## roadmap
+## Roadmap
 
 Planned improvements (subject to change):
 
@@ -337,14 +337,14 @@ Planned improvements (subject to change):
 
 ---
 
-## license
+## License
 
 This project is licensed under the **MIT License**.
 See `LICENSE.MIT`.
 
 ---
 
-## acknowledgements
+## Acknowledgements
 
 - Inspired by existing open-source DBC parsers and tools.
 - Built using the Rust ecosystem, in particular `nom` for parsing.
