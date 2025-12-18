@@ -21,8 +21,8 @@ struct OptionParser {
     blacklist: Option<String>,
 }
 
-/// Parse une liste d'identifiants CAN sous forme "0x101,0x121,289" etc.
-/// Accepte hex (avec/ sans 0x) et décimal, séparés par virgules/espaces.
+/// Parse a list of CAN identifiers in the form "0x101,0x121,289" etc.
+/// Accept hex (with or without 0x prefix) and decimal, separated with commas or spaces
 fn parse_id_list(input: &str) -> Result<Vec<u32>> {
     let mut out = Vec::new();
     for raw in input.split([',', ' ', '\n', '\t']).map(str::trim).filter(|s| !s.is_empty()) {
@@ -32,7 +32,7 @@ fn parse_id_list(input: &str) -> Result<Vec<u32>> {
             && raw.len() > 1
             && raw.chars().any(|c| c.is_ascii_alphabetic())
         {
-            // cas "ABC" (hex sans 0x)
+            // case "ABC" (hex without 0x)
             u32::from_str_radix(raw, 16).with_context(|| format!("invalid hex id: {raw}"))?
         } else {
             raw.parse::<u32>().with_context(|| format!("invalid decimal id: {raw}"))?

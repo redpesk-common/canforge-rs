@@ -14,7 +14,7 @@ use std::io;
 
 use std::fmt;
 
-#[derive(Debug)] // ← add this
+#[derive(Debug)]
 pub struct DbcError {
     pub uid: &'static str,
     pub info: String,
