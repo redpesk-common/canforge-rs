@@ -9,20 +9,19 @@
  */
 
 use crate::parser::dbc_from_str;
-use std::fs::File;
+use std::fs;
 use std::io;
-use std::io::prelude::*;
 
 use std::fmt;
 
-#[derive(Debug)] // ← add this
-pub struct DbcError<'a> {
+#[derive(Debug)]
+pub struct DbcError {
     pub uid: &'static str,
     pub info: String,
-    pub error: Error<'a>,
+    pub error: Error,
 }
 
-impl fmt::Display for Error<'_> {
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Incomplete(s) => write!(f, "incomplete input: {s}"),
@@ -34,20 +33,20 @@ impl fmt::Display for Error<'_> {
     }
 }
 
-impl fmt::Display for DbcError<'_> {
+impl fmt::Display for DbcError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "uid:{}, info:{}", self.uid, self.info)
     }
 }
 
-impl std::error::Error for Error<'_> {}
+impl std::error::Error for Error {}
 
 /// Parser error kinds.
 #[derive(Debug)] // ← and this
-pub enum Error<'a> {
+pub enum Error {
     /// Remaining string; the `DbcObject` was only read partially.
     /// Occurs when, e.g., an unexpected symbol appears.
-    Incomplete(&'a str),
+    Incomplete(String),
 
     /// Parser failed.
     Parsing(String),
@@ -453,34 +452,20 @@ impl DbcObject {
     ///
     /// # Errors
     /// Returns an error if the file cannot be opened/read or the DBC content is invalid.
-    pub fn from_file(dbcpath: &str) -> Result<DbcObject, DbcError<'_>> {
-        let filename = Box::leak(dbcpath.to_owned().into_boxed_str()) as &'static str;
-        let dbc_buffer = || -> Result<Vec<u8>, io::Error> {
-            let mut fd = File::open(filename)?;
-            // was: Vec::with_capacity(size as usize);
-            let size = fd.metadata().unwrap().len();
-            let mut buffer = Vec::with_capacity(usize::try_from(size).unwrap_or(usize::MAX));
-            fd.read_to_end(&mut buffer)?;
-            Ok(buffer)
-        };
-
-        match dbc_buffer() {
-            Err(error) => {
-                Err(DbcError { uid: filename, error: Error::Misc, info: error.to_string() })
-            },
-            Ok(buffer) => {
-                let slice = buffer.leak();
-                let data = std::str::from_utf8(slice).unwrap();
-                dbc_from_str(data)
-            },
-        }
+    pub fn from_file(dbcpath: &str) -> Result<DbcObject, DbcError> {
+        let buffer = fs::read_to_string(dbcpath).map_err(|error| DbcError {
+            uid: "DbcObject::from_file",
+            error: Error::Misc,
+            info: error.to_string(),
+        })?;
+        dbc_from_str(buffer.as_str())
     }
     /// Parse a DBC object from a UTF-8 string.
     ///
     /// # Errors
     /// Returns an error if the DBC content cannot be parsed.
     #[allow(clippy::should_implement_trait)]
-    pub fn from_str(dbc_buffer: &str) -> Result<DbcObject, DbcError<'_>> {
+    pub fn from_str(dbc_buffer: &str) -> Result<DbcObject, DbcError> {
         dbc_from_str(dbc_buffer)
     }
 
@@ -574,7 +559,7 @@ impl DbcObject {
     pub fn message_multiplexor_switch(
         &self,
         message_id: MessageId,
-    ) -> Result<Option<&Signal>, Error<'_>> {
+    ) -> Result<Option<&Signal>, Error> {
         let message = self.messages.iter().find(|message| message.id.0 == message_id.0);
 
         if let Some(message) = message {

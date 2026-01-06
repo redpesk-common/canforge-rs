@@ -1,9 +1,12 @@
-# dbcparser & dbcparser-cli
+# canforge-rs: `dbcparser`, `dbcparser-cli`, and `parse-dbc`
 
 A pragmatic DBC (CAN database) parser and Rust code generator.
 
-- **dbcparser**: library that parses DBC files and exposes a domain model used for code generation.
-- **dbcparser-cli**: command-line tool that generates Rust code from a DBC file, with filtering and configuration support.
+This repository is a Rust workspace that currently provides:
+
+- **`dbcparser`**: library that parses DBC files and exposes a domain model used for code generation.
+- **`dbcparser-cli`**: command-line tool that generates Rust code from a DBC file, with filtering and configuration support.
+- **`parse-dbc`** (in `dbcparser-check-cli/`): a small helper CLI used to run the generator against a DBC file and a candump log (primarily for checks/demos).
 
 > Status: used with real DBC examples, still evolving. Public API and CLI options may change.
 
@@ -11,7 +14,7 @@ A pragmatic DBC (CAN database) parser and Rust code generator.
 
 ## Project layout
 
-Matches (roughly) the current repository:
+This matches the current repository:
 
 ```text
 .
@@ -32,21 +35,27 @@ Matches (roughly) the current repository:
 │   │   └── gencode.rs      # Rust code generation
 │   └── tests/
 │       └── test.rs         # integration tests for parser & lib
-└── dbcparser-cli/
+├── dbcparser-cli/
+│   ├── Cargo.toml
+│   ├── src/
+│   │   └── main.rs         # CLI: generate Rust from DBC
+│   ├── tests/
+│   │   ├── cli.rs          # CLI behaviour tests
+│   │   ├── test_bms.rs     # BMS example tests
+│   │   └── test_model3.rs  # Model3 example tests
+│   └── examples/
+│       ├── bms/
+│       │   ├── bms.rs
+│       │   ├── bms_blacklist.rs
+│       │   └── dbc/
+│       │       └── BMS.dbc
+│       └── model3/
+│           └── dbc/
+│               └── model3can.dbc
+└── dbcparser-check-cli/
     ├── Cargo.toml
-    ├── src/
-    │   └── main.rs         # CLI: generate Rust from DBC
-    └── tests/
-        ├── cli.rs          # CLI behaviour tests
-        ├── test_bms.rs     # BMS example tests
-        └── test_model3.rs  # Model3 example tests
-```
-
-Example DBC fixtures and generated code live under:
-
-```text
-dbcparser-cli/examples/bms/...
-dbcparser-cli/examples/model3/...
+    └── src/
+        └── parse-dbc.rs    # bin: parse-dbc
 ```
 
 ---
@@ -70,11 +79,16 @@ CLI (`dbcparser-cli`):
   - ability to save the *effective* configuration to YAML for later reuse,
   - verbose mode to print the effective configuration as YAML.
 
+Helper CLI (`parse-dbc`):
+
+- Runs the generator with a DBC file and an output path (typically used with a candump log workflow).
+- Intended mainly as a lightweight check/demo tool.
+
 Real-world examples:
 
 - BMS DBC: `dbcparser-cli/examples/bms/dbc/BMS.dbc`
 - Model3 DBC: `dbcparser-cli/examples/model3/dbc/model3can.dbc`
-- Generated Rust files for these examples are checked into `examples/`.
+- Example code and/or generated Rust files live under `dbcparser-cli/examples/`.
 
 ### Design goals / roadmap
 
@@ -93,10 +107,12 @@ These are **not fully implemented yet**, but drive the design:
 
 ### Requirements
 
-- **Rust** 1.81+ (stable)
-- Optional developer tools:
-  - `cargo-edit`
-  - `cargo-deny` (to use `deny.toml`)
+- Rust stable (edition 2021)
+
+Optional developer tools:
+
+- `pre-commit` (recommended if you want local hooks)
+- `cargo-deny` (to use `deny.toml`)
 
 ### Clone and build
 
@@ -106,28 +122,28 @@ cd canforge-rs
 cargo build
 ```
 
-To build only the CLI:
+Build only the CLI:
 
 ```bash
 cargo build -p dbcparser-cli
 ```
 
-Run CLI help:
+Build only the helper CLI:
 
 ```bash
-cargo run -p dbcparser-cli -- --help
+cargo build -p parse-dbc
 ```
 
 ---
 
-## CLI usage (current)
+## CLI usage
+
+### `dbcparser-cli`
 
 The main binary is `dbcparser-cli`.
 It currently focuses on **generating Rust code from a DBC file**.
 
 ```text
-Generate Rust code from a DBC file
-
 Usage: dbcparser-cli [OPTIONS]
 
 Options:
@@ -145,7 +161,13 @@ Options:
   -V, --version                    Print version
 ```
 
-### ID list formats
+Run CLI help:
+
+```bash
+cargo run -p dbcparser-cli -- --help
+```
+
+#### ID list formats
 
 Whitelist and blacklist options accept:
 
@@ -159,12 +181,12 @@ Examples:
 --blacklist "0x101,0x200"
 ```
 
-### Basic examples
+#### Basic examples
 
 Generate Rust code with defaults:
 
 ```bash
-dbcparser-cli \
+cargo run -p dbcparser-cli -- \
   --in dbcparser-cli/examples/bms/dbc/BMS.dbc \
   --out ./generated_bms.rs
 ```
@@ -172,7 +194,7 @@ dbcparser-cli \
 No header:
 
 ```bash
-dbcparser-cli \
+cargo run -p dbcparser-cli -- \
   --in dbcparser-cli/examples/model3/dbc/model3can.dbc \
   --out ./generated_model3.rs \
   --no-header
@@ -181,7 +203,7 @@ dbcparser-cli \
 Custom header file:
 
 ```bash
-dbcparser-cli \
+cargo run -p dbcparser-cli -- \
   --in dbcparser-cli/examples/bms/dbc/BMS.dbc \
   --out ./generated_bms.rs \
   --header-file ./HEADER.txt
@@ -190,25 +212,25 @@ dbcparser-cli \
 Whitelist and blacklist filtering:
 
 ```bash
-dbcparser-cli \
+cargo run -p dbcparser-cli -- \
   --in dbcparser-cli/examples/model3/dbc/model3can.dbc \
   --out ./generated_model3_filtered.rs \
   --whitelist "0x101,0x201,513" \
   --blacklist "0x101"
 ```
 
-### YAML configuration
+#### YAML configuration
 
-You can load parameters from a YAML file:
+Load parameters from a YAML file:
 
 ```bash
-dbcparser-cli --config ./config.yaml
+cargo run -p dbcparser-cli -- --config ./config.yaml
 ```
 
-And/or save the effective configuration (after CLI parsing) to a YAML file:
+Save the effective configuration (after CLI parsing) to a YAML file:
 
 ```bash
-dbcparser-cli \
+cargo run -p dbcparser-cli -- \
   --in dbcparser-cli/examples/bms/dbc/BMS.dbc \
   --out ./generated_bms.rs \
   --whitelist "0x101,0x121" \
@@ -218,17 +240,26 @@ dbcparser-cli \
 Verbose mode prints the effective configuration as YAML to stdout:
 
 ```bash
-dbcparser-cli \
-  --config ./config.yaml \
-  --verbose
+cargo run -p dbcparser-cli -- --config ./config.yaml --verbose
 ```
+
+### `parse-dbc` (helper CLI)
+
+The helper binary is `parse-dbc` (package: `parse-dbc`).
+
+```bash
+cargo run -p parse-dbc -- <DBC_FILE> <OUTPUT_FILE>
+```
+
+The tool is intentionally minimal and is mainly used for checks/demos. For production-style code generation, prefer `dbcparser-cli`.
 
 ---
 
 ## Library usage (high-level)
 
 The library is available as the `dbcparser` crate within this workspace.
-The internal structure is currently:
+
+Current internal structure:
 
 - `src/parser.rs` — parsing logic (nom-based).
 - `src/data.rs` — data structures representing messages, signals, attributes, etc.
@@ -308,8 +339,8 @@ Planned improvements (subject to change):
 
 ## License
 
-This project is licensed under the **MIT License** (or the license indicated in the repository).
-See the `LICENSE` file if present.
+This project is licensed under the **MIT License**.
+See `LICENSE.MIT`.
 
 ---
 

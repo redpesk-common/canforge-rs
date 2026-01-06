@@ -953,7 +953,7 @@ pub fn signal_groups(s: &str) -> IResult<&str, SignalGroups> {
 /// # Errors
 /// Returns a `DbcError` if parsing fails or if trailing, non-whitespace
 /// input remains after parsing.
-pub fn dbc_from_str(dbc_str: &str) -> Result<DbcObject, DbcError<'_>> {
+pub fn dbc_from_str(dbc_str: &str) -> Result<DbcObject, DbcError> {
     match dbc_parse_str(dbc_str) {
         Ok((remaining, object)) => match multispace0::<&str, ()>(remaining) {
             Ok((ascii, _)) => {
@@ -961,7 +961,7 @@ pub fn dbc_from_str(dbc_str: &str) -> Result<DbcObject, DbcError<'_>> {
                     println!("Unprocessed DBC: {ascii}");
                     return Err(DbcError {
                         uid: "parsing-not-completed",
-                        error: Error::Incomplete(remaining),
+                        error: Error::Incomplete(remaining.to_string()),
                         info: "fail to parse dbc input".to_owned(),
                     });
                 }

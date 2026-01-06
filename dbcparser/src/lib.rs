@@ -6,19 +6,16 @@
 )]
 extern crate nom;
 
-// -- modules
 #[path = "data.rs"]
 pub mod data;
 
-// mappe le nom de module `parser` sur le fichier `parser.rs`
 #[path = "parser.rs"]
 mod parser;
 
-// expose l’API publique principale (ex: parseur haut-niveau)
 pub use parser::dbc_from_str;
 
 // -----------------------------------------------------------------------------
-// passerelle pour tests (helpers internes), activée uniquement avec la feature
+// proxy for test functions, onlu enabled with the associated feature
 // -----------------------------------------------------------------------------
 #[cfg(any(test, feature = "internal-parser-tests"))]
 pub mod test_api {
@@ -123,10 +120,8 @@ pub mod gencode;
 pub use crate::data::*;
 pub use crate::gencode::*;
 
-// attention: `prelude` ne doit pas référencer `parser` quand la feature n’est pas active
 pub mod prelude {
     pub use crate::data::*;
     pub use crate::gencode::*;
-    // expose uniquement la fonction haut-niveau toujours publique
     pub use crate::parser::dbc_from_str;
 }
