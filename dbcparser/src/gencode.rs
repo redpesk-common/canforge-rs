@@ -61,7 +61,7 @@ macro_rules! code_output {
     };
 }
 
-pub fn get_ctime(format: &str) -> io::Result<String> {
+fn get_ctime(format: &str) -> io::Result<String> {
     let fmt = CString::new(format)
         .map_err(|_| io::Error::other("invalid format string (CString::new)"))?;
 
@@ -109,16 +109,22 @@ pub fn get_ctime(format: &str) -> io::Result<String> {
 /// Returns current time formatted with `format`.
 ///
 /// # Errors
-/// Returns `CanError` if time formatting fails or the system clock is unavailable.
+/// Returns an I/O error if time formatting fails or the system clock is unavailable.
 pub fn get_time(format: &str) -> Result<String, Error> {
     get_ctime(format).map_err(|e| Error::other(format!("get_ctime failed: {e}")))
 }
 
+fn is_keyword(ident: &str) -> bool {
+    KEYWORDS.iter().any(|kw| kw.eq_ignore_ascii_case(ident))
+}
+
+fn needs_prefix(ident: &str) -> bool {
+    is_keyword(ident) || !ident.starts_with(|c: char| c.is_ascii_alphabetic())
+}
+
 impl ValDescription {
     fn get_type_kamel(&self) -> String {
-        if KEYWORDS.contains(&self.b.to_lowercase().as_str())
-            || !self.b.starts_with(|c: char| c.is_ascii_alphabetic())
-        {
+        if needs_prefix(&self.b) {
             format!("X{}", self.b).to_upper_camel_case()
         } else {
             // to_upper_camel_case() takes &self; no clone/owned needed
@@ -129,7 +135,7 @@ impl ValDescription {
     #[allow(clippy::cast_possible_truncation)]
     fn get_data_value(&self, data: &str) -> String {
         match data {
-            "bool" => format!("{}", (self.a as i64) == 1),
+            "bool" => ((self.a as i64) == 1).to_string(),
             "f64" => format!("{}_f64", self.a),
             _ => format!("{}_{}", self.a as i64, data),
         }
@@ -138,9 +144,7 @@ impl ValDescription {
 
 impl Message {
     fn get_type_kamel(&self) -> String {
-        if KEYWORDS.contains(&self.name.to_lowercase().as_str())
-            || !self.name.starts_with(|c: char| c.is_ascii_alphabetic())
-        {
+        if needs_prefix(&self.name) {
             format!("X{}", self.name).to_upper_camel_case()
         } else {
             self.name.to_upper_camel_case()
@@ -150,11 +154,20 @@ impl Message {
 
 impl Signal {
     fn le_start_end_bit(&self, msg: &Message) -> io::Result<(u64, u64)> {
-        let msg_bits = msg.size.checked_mul(8).unwrap();
-        let start_bit = self.start_bit;
-        let end_bit = self.start_bit + self.size;
+        let msg_bits = msg.size.checked_mul(8).ok_or_else(|| {
+            Error::other(format!(
+                "message:{} size overflow while computing bits (size:{} bytes)",
+                msg.name, msg.size
+            ))
+        })?;
 
-        if start_bit > msg_bits {
+        let start_bit = self.start_bit;
+        let end_bit = self
+            .start_bit
+            .checked_add(self.size)
+            .ok_or_else(|| Error::other(format!("signal:{} end_bit overflow", self.name)))?;
+
+        if start_bit >= msg_bits {
             return Err(Error::other(format!(
                 "signal:{} starts at {}, but message is only {} bits",
                 self.name, start_bit, msg_bits
@@ -171,25 +184,36 @@ impl Signal {
         Ok((start_bit, end_bit))
     }
 
-    fn be_start_end_bit(self: &Signal, msg: &Message) -> io::Result<(u64, u64)> {
-        let result = || -> Option<(u64, u64, u64)> {
-            let x = self.start_bit.checked_div(8)?;
-            let x = x.checked_mul(8)?;
-            let y = self.start_bit.checked_rem(8)?;
-            let y = 7u64.checked_sub(y)?;
+    fn be_start_end_bit(&self, msg: &Message) -> io::Result<(u64, u64)> {
+        let msg_bits = msg.size.checked_mul(8).ok_or_else(|| {
+            Error::other(format!(
+                "message:{} size overflow while computing bits (size:{} bytes)",
+                msg.name, msg.size
+            ))
+        })?;
 
-            let start_bit = x.checked_add(y)?;
-            let end_bit = start_bit.checked_add(self.size)?;
-            let msg_bits = msg.size.checked_mul(8)?;
-            Some((start_bit, end_bit, msg_bits))
-        };
+        let byte_base = self
+            .start_bit
+            .checked_div(8)
+            .and_then(|v| v.checked_mul(8))
+            .ok_or_else(|| Error::other(format!("signal:{} start_bit overflow", self.name)))?;
 
-        let Some((start_bit, end_bit, msg_bits)) = result() else {
-            return Err(Error::other(format!(
-                "signal:{} starts at {}, but message is only {} bits",
-                self.name, self.start_bit, msg.size
-            )));
-        };
+        let bit_in_byte = self
+            .start_bit
+            .checked_rem(8)
+            .ok_or_else(|| Error::other(format!("signal:{} start_bit overflow", self.name)))?;
+
+        let bit_from_msb = 7u64
+            .checked_sub(bit_in_byte)
+            .ok_or_else(|| Error::other(format!("signal:{} start_bit overflow", self.name)))?;
+
+        let start_bit = byte_base
+            .checked_add(bit_from_msb)
+            .ok_or_else(|| Error::other(format!("signal:{} start_bit overflow", self.name)))?;
+
+        let end_bit = start_bit
+            .checked_add(self.size)
+            .ok_or_else(|| Error::other(format!("signal:{} end_bit overflow", self.name)))?;
 
         if start_bit > msg_bits {
             return Err(Error::other(format!(
@@ -223,7 +247,7 @@ impl Signal {
             n if n <= 8 => "i8",
             n if n <= 16 => "i16",
             n if n <= 32 => "i32",
-            _ => "u64",
+            _ => "i64",
         };
         size.to_string()
     }
@@ -254,9 +278,7 @@ impl Signal {
     }
 
     fn get_type_kamel(&self) -> String {
-        if KEYWORDS.contains(&self.name.to_lowercase().as_str())
-            || !self.name.starts_with(|c: char| c.is_ascii_alphabetic())
-        {
+        if needs_prefix(&self.name) {
             format!("X{}", self.name).to_upper_camel_case()
         } else {
             self.name.to_upper_camel_case()
@@ -264,9 +286,7 @@ impl Signal {
     }
 
     fn get_type_snake(&self) -> String {
-        if KEYWORDS.contains(&self.name.to_lowercase().as_str())
-            || !self.name.starts_with(|c: char| c.is_ascii_alphabetic())
-        {
+        if needs_prefix(&self.name) {
             format!("X{}", self.name).to_snake_case()
         } else {
             self.name.to_snake_case()
@@ -376,7 +396,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         }
 
         let data_type = self.get_data_type();
-        let dtype_enum = self.get_data_type().to_upper_camel_case();
+        let dtype_enum = data_type.as_str().to_upper_camel_case();
 
         code_output!(
             code,
@@ -1274,13 +1294,9 @@ impl DbcParser {
     fn check_list(canid: MessageId, list: &[u32]) -> bool {
         list.binary_search(&canid.0).is_ok()
     }
-    /// Generate Rust code from the configured DBC.
-    ///
+
     /// # Errors
-    /// I/O errors reading the DBC or writing output; parsing errors.
-    ///
-    /// # Panics
-    /// Panics if time formatting (`get_time("%c")`) fails.
+    /// Propagates any I/O error: reading the DBC, parsing, writing output, and time formatting.
     #[allow(clippy::too_many_lines)]
     pub fn generate(&mut self) -> io::Result<()> {
         let Some(infile) = &self.infile else {
@@ -1326,15 +1342,12 @@ impl DbcParser {
         let code =
             DbcCodeGen { dbcfd, outfd, range_check: self.range_check, serde_json: self.serde_json };
 
-        match self.header {
-            None => {},
-            Some(header) => {
-                code_output!(code, header)?;
-            },
+        if let Some(header) = self.header {
+            code_output!(code, header)?;
         }
 
         // change Rust default to stick as much as possible on can names
-        let gen_time = get_time("%c").unwrap();
+        let gen_time = get_time("%c")?;
 
         let uid = self.uid;
         code_output!(
