@@ -8,6 +8,7 @@ license = "MIT"
 [dependencies]
 nom = { version = "7", features = ["alloc"] }
 heck = "0.4"
+libc = "0.2"
 
 [features]
 default = []
