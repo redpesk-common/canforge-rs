@@ -339,8 +339,8 @@ Planned improvements (subject to change):
 
 ## License
 
-This project is licensed under the **MIT License**.
-See `LICENSE.MIT`.
+This project is licensed under the **APACHE V2 License**.
+See `LICENSE-APACHE`.
 
 ---
 

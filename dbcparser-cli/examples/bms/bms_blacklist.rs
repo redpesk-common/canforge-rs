@@ -1,4 +1,3 @@
-
 // -----------------------------------------------------------------------
 //              <- DBC file Rust mapping ->
 // -----------------------------------------------------------------------
@@ -26,9 +25,25 @@
 // --------------------------------------------------------------
 // - code generated from /home/ronan/Iot/rust/canforge-rs/dbcparser-cli/.tmp4Xa9VC/../examples/bms/dbc/BMS.dbc (Tue Nov 18 12:48:30 2025)
 // - update only with [dbc-parser|build.rs::DbcParser]
-// - source code: https://github.com/redpesk-labs/canbus-rs
-// - (C)IoT.bzh(2023), Author: Fulup Ar Foll, http://redpesk.bzh
-// - License: $RP_BEGIN_LICENSE$ SPDX:MIT https://opensource.org/licenses/MIT $RP_END_LICENSE$
+// - source code: https://github.com/redpesk-common/canforge-rs
+// Generated file — DO NOT EDIT.
+// Update only with [dbc-parser|build.rs::DbcParser]
+// Source: https://github.com/redpesk-common/canforge-rs
+//
+// Copyright (C) 2023 IoT.bzh Company
+// Author: Fulup Ar Foll <fulup@iot.bzh>
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 // -------------------------------------------------------------
 mod DbcSimple {
 #![allow(non_upper_case_globals)]
