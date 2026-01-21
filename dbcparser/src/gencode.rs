@@ -23,18 +23,96 @@
  * Reference:
  *   http://mcu.so/Microcontroller/Automotive/dbc-file-format-documentation_compress.pdf
  */
-
-use crate::data::{
-    ByteOrder, DbcObject, Message, MessageId, MsgCodeGen, MultiplexIndicator, SigCodeGen, Signal,
-    Transmitter, ValDescription, ValueType,
-};
+// use crate::data::{
+//     ByteOrder, DbcObject, Message, MessageId, MsgCodeGen, MultiplexIndicator, SigCodeGen, Signal,
+//     Transmitter, ValDescription, ValueType,
+// };
 use heck::{ToSnakeCase, ToUpperCamelCase};
 
+use can_dbc::*;
+use libc;
 use std::ffi::CString;
 use std::fs::File;
 use std::io::{self, Error, Write};
 
-use libc;
+pub type DbcObject = Dbc;
+
+pub trait SigCodeGen<T> {
+    /// Generate code for a signal.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_code_signal(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate code to build an "any" CAN frame.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_can_any_frame(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate code to build a standard CAN frame.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_can_std_frame(&self, code: T, msg: &Message) -> io::Result<()>;
+    //fn gen_can_mux_frame(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate the signal trait.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_signal_trait(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate min/max helpers from DBC.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_dbc_min_max(&self, code: T, msg: &Message) -> io::Result<()>;
+
+    /// Generate signal impl.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_signal_impl(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate signal enum.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_signal_enum(&self, code: T, msg: &Message) -> io::Result<()>;
+}
+
+pub trait MsgCodeGen<T> {
+    /// Generate the code for one message.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_code_message(&self, code: T) -> io::Result<()>;
+    /// Generate the CAN/DBC message definition.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_can_dbc_message(&self, code: T) -> io::Result<()>;
+
+    /// Generate the CAN/DBC impl section.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_can_dbc_impl(&self, code: T) -> io::Result<()>;
+}
+
+pub trait ValCodeGen {
+    fn get_type_kamel(&self) -> String;
+    fn get_data_value(&self, data: &str) -> String {
+        "no-value".to_string()
+    }
+}
+
+pub trait SignalCodeGen {
+    fn le_start_end_bit(&self, msg: &Message) -> io::Result<(u64, u64)>;
+    fn be_start_end_bit(&self, msg: &Message) -> io::Result<(u64, u64)>;
+    fn get_data_usize(&self) -> String;
+    fn get_data_isize(&self) -> String;
+    fn has_scaling(&self) -> bool;
+    fn get_data_type(&self) -> String;
+    fn get_type_kamel(&self) -> String;
+    fn get_type_snake(&self) -> String;
+}
 
 pub struct DbcCodeGen {
     outfd: Option<File>,
@@ -135,7 +213,7 @@ fn needs_prefix(ident: &str) -> bool {
     is_keyword(ident) || !ident.starts_with(|c: char| c.is_ascii_alphabetic())
 }
 
-impl ValDescription {
+impl ValCodeGen for ValDescription {
     fn get_type_kamel(&self) -> String {
         if needs_prefix(&self.b) {
             format!("X{}", self.b).to_upper_camel_case()
@@ -155,7 +233,7 @@ impl ValDescription {
     }
 }
 
-impl Message {
+impl ValCodeGen for Message {
     fn get_type_kamel(&self) -> String {
         if needs_prefix(&self.name) {
             format!("X{}", self.name).to_upper_camel_case()
@@ -165,7 +243,7 @@ impl Message {
     }
 }
 
-impl Signal {
+impl SignalCodeGen for Signal {
     fn le_start_end_bit(&self, msg: &Message) -> io::Result<(u64, u64)> {
         let msg_bits = msg.size.checked_mul(8).ok_or_else(|| {
             Error::other(format!(

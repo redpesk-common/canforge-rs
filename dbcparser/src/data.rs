@@ -19,10 +19,10 @@
  * limitations under the License.
  */
 
-use crate::parser::dbc_from_str;
+//use crate::parser::dbc_from_str;
 use std::fs;
 use std::io;
-
+use can_dbc::Dbc;
 use std::fmt;
 
 #[derive(Debug)]
@@ -469,15 +469,17 @@ impl DbcObject {
             error: Error::Misc,
             info: error.to_string(),
         })?;
-        dbc_from_str(buffer.as_str())
+        //dbc_from_str(buffer.as_str())
+        Dbc::try_from(buffer.as_str())
     }
+
     /// Parse a DBC object from a UTF-8 string.
     ///
     /// # Errors
     /// Returns an error if the DBC content cannot be parsed.
     #[allow(clippy::should_implement_trait)]
-    pub fn from_str(dbc_buffer: &str) -> Result<DbcObject, DbcError> {
-        dbc_from_str(dbc_buffer)
+    pub fn from_str(buffer: &str) -> Result<DbcObject, DbcError> {
+       Dbc::try_from(buffer)
     }
 
     #[must_use]
