@@ -24,21 +24,94 @@
  *   http://mcu.so/Microcontroller/Automotive/dbc-file-format-documentation_compress.pdf
  */
 
-use crate::data::{
-    ByteOrder, DbcObject, Message, MessageId, MsgCodeGen, MultiplexIndicator, SigCodeGen, Signal,
-    Transmitter, ValDescription, ValueType,
-};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 
+use can_dbc::*;
+use libc;
 use std::ffi::CString;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Error, Write};
 
-use libc;
+pub trait SigCodeGen<T> {
+    /// Generate code for a signal.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_code_signal(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate code to build an "any" CAN frame.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_can_any_frame(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate code to build a standard CAN frame.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_can_std_frame(&self, code: T, msg: &Message) -> io::Result<()>;
+    //fn gen_can_mux_frame(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate the signal trait.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_signal_trait(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate min/max helpers from DBC.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_dbc_min_max(&self, code: T, msg: &Message) -> io::Result<()>;
+
+    /// Generate signal impl.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_signal_impl(&self, code: T, msg: &Message) -> io::Result<()>;
+    /// Generate signal enum.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_signal_enum(&self, code: T, msg: &Message) -> io::Result<()>;
+}
+
+pub trait MsgCodeGen<T> {
+    /// Generate the code for one message.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_code_message(&self, code: T) -> io::Result<()>;
+    /// Generate the CAN/DBC message definition.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_can_dbc_message(&self, code: T) -> io::Result<()>;
+
+    /// Generate the CAN/DBC impl section.
+    ///
+    /// # Errors
+    /// Returns an error if writing to the output fails.
+    fn gen_can_dbc_impl(&self, code: T) -> io::Result<()>;
+}
+
+pub trait ValCodeGen {
+    fn get_type_kamel(&self) -> String;
+    fn get_data_value(&self, _data: &str) -> String {
+        "no-value".to_string()
+    }
+}
+
+pub trait SignalCodeGen {
+    fn le_start_end_bit(&self, msg: &Message) -> io::Result<(u64, u64)>;
+    fn be_start_end_bit(&self, msg: &Message) -> io::Result<(u64, u64)>;
+    fn get_data_usize(&self) -> String;
+    fn get_data_isize(&self) -> String;
+    fn has_scaling(&self) -> bool;
+    fn get_data_type(&self) -> String;
+    fn get_type_kamel(&self) -> String;
+    fn get_type_snake(&self) -> String;
+}
 
 pub struct DbcCodeGen {
     outfd: Option<File>,
-    dbcfd: DbcObject,
+    dbcfd: Dbc,
     range_check: bool,
     serde_json: bool,
 }
@@ -135,27 +208,27 @@ fn needs_prefix(ident: &str) -> bool {
     is_keyword(ident) || !ident.starts_with(|c: char| c.is_ascii_alphabetic())
 }
 
-impl ValDescription {
+impl ValCodeGen for ValDescription {
     fn get_type_kamel(&self) -> String {
-        if needs_prefix(&self.b) {
-            format!("X{}", self.b).to_upper_camel_case()
+        if needs_prefix(&self.description) {
+            format!("X{}", self.description).to_upper_camel_case()
         } else {
             // to_upper_camel_case() takes &self; no clone/owned needed
-            self.b.to_upper_camel_case()
+            self.description.to_upper_camel_case()
         }
     }
 
     #[allow(clippy::cast_possible_truncation)]
     fn get_data_value(&self, data: &str) -> String {
         match data {
-            "bool" => ((self.a as i64) == 1).to_string(),
-            "f64" => format!("{}_f64", self.a),
-            _ => format!("{}_{}", self.a as i64, data),
+            "bool" => ((self.id as i64) == 1).to_string(),
+            "f64" => format!("{}_f64", self.id),
+            _ => format!("{}_{}", self.id as i64, data),
         }
     }
 }
 
-impl Message {
+impl ValCodeGen for Message {
     fn get_type_kamel(&self) -> String {
         if needs_prefix(&self.name) {
             format!("X{}", self.name).to_upper_camel_case()
@@ -165,7 +238,7 @@ impl Message {
     }
 }
 
-impl Signal {
+impl SignalCodeGen for Signal {
     fn le_start_end_bit(&self, msg: &Message) -> io::Result<(u64, u64)> {
         let msg_bits = msg.size.checked_mul(8).ok_or_else(|| {
             Error::other(format!(
@@ -507,7 +580,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
     fn gen_signal_enum(&self, code: &DbcCodeGen, msg: &Message) -> io::Result<()> {
         if let Some(variants) = code.dbcfd.value_descriptions_for_signal(msg.id, self.name.as_str())
         {
-            let id = msg.id.0;
+            let id = msg.id.raw();
             let name = self.name.as_str();
             let type_kamel = self.get_type_kamel();
             code_output!(code, format!(r#"    // DBC definition for MsgID:{id} Signal:{name}"#))?;
@@ -521,7 +594,6 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             }
 
             let data_type = self.get_data_type();
-            let type_kamel = self.get_type_kamel();
             code_output!(
                 code,
                 format!(
@@ -534,7 +606,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 )
             )?;
             for variant in variants {
-                if variant.a > self.max || variant.a < self.min {
+                if (variant.id as f64) > self.max || (variant.id as f64) < self.min {
                     let type_kamel = self.get_type_kamel();
                     let variant_type_kamel = variant.get_type_kamel();
                     let variant_data_type = variant.get_data_value(&self.get_data_type());
@@ -697,10 +769,10 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 let mut count = 0;
                 code_output!(code, r#"            match self.get_typed_value() {"#)?;
                 for variant in variants {
-                    if variant.a > self.max || variant.a < self.min {
+                    if (variant.id as f64) > self.max || (variant.id as f64) < self.min {
                         let data_value = variant.get_data_value(&self.get_data_type());
                         let type_kamel = variant.get_type_kamel();
-                        let variant_a = variant.a;
+                        let variant_id = variant.id;
                         let data_type = self.get_data_type();
                         let min = self.min;
                         let max = self.max;
@@ -708,7 +780,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                         code_output!(
                             code,
                             format!(
-                                r#"                // WARNING {data_value} => Err(CanError::new("not-in-range","({type_kamel}) !!! {variant_a}({data_type}) not in [{min}..{max}] range")),"#
+                                r#"                // WARNING {data_value} => Err(CanError::new("not-in-range","({type_kamel}) !!! {variant_id}({data_type}) not in [{min}..{max}] range")),"#
                             )
                         )?;
                     } else {
@@ -749,10 +821,10 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 )
             )?;
             for variant in variants {
-                if variant.a > self.max || variant.a < self.min {
+                if (variant.id as f64) > self.max || (variant.id as f64) < self.min {
                     let type_kamel = self.get_type_kamel();
                     let variant_type_kamel = variant.get_type_kamel();
-                    let variant_a = variant.a;
+                    let variant_id = variant.id;
                     let data_type = self.get_data_type();
                     let min = self.min;
                     let max = self.max;
@@ -760,7 +832,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                     code_output!(
                         code,
                         format!(
-                            r#"                Dbc{type_kamel}::{variant_type_kamel} => Err(CanError::new("not-in-range","({variant_type_kamel}) !!! {variant_a}({data_type}) not in [{min}..{max}] range")),"#
+                            r#"                Dbc{type_kamel}::{variant_type_kamel} => Err(CanError::new("not-in-range","({variant_type_kamel}) !!! {variant_id}({data_type}) not in [{min}..{max}] range")),"#
                         )
                     )?;
                 } else {
@@ -922,7 +994,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
 impl MsgCodeGen<&DbcCodeGen> for Message {
     fn gen_can_dbc_impl(&self, code: &DbcCodeGen) -> io::Result<()> {
         let sig_count = self.signals.len();
-        let msg_id = self.id.to_u32();
+        let msg_id = self.id.raw();
         let msg_name = self.get_type_kamel();
 
         code_output!(
@@ -1112,7 +1184,7 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
     fn gen_code_message(&self, code: &DbcCodeGen) -> io::Result<()> {
         // message header
         let name = &self.name;
-        let id = self.id.0;
+        let id = self.id.raw();
         let size = self.size;
 
         code_output!(
@@ -1304,7 +1376,7 @@ impl DbcParser {
     }
 
     fn check_list(canid: MessageId, list: &[u32]) -> bool {
-        list.binary_search(&canid.0).is_ok()
+        list.binary_search(&canid.raw()).is_ok()
     }
 
     /// # Errors
@@ -1316,13 +1388,14 @@ impl DbcParser {
         };
 
         // open and parse dbc input file
-        let mut dbcfd = match DbcObject::from_file(infile.as_str()) {
+        let buffer = fs::read_to_string(infile.as_str())?;
+        let mut dbcfd = match Dbc::try_from(buffer.as_str()) {
             Err(error) => return Err(Error::other(error.to_string())),
             Ok(dbcfd) => dbcfd,
         };
 
         // sort message by canid
-        dbcfd.messages.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+        dbcfd.messages.sort_by(|a, b| a.id.raw().cmp(&b.id.raw()));
 
         if let Some(mut list) = self.whitelist.clone() {
             if list.is_empty() {
@@ -1340,7 +1413,7 @@ impl DbcParser {
         }
 
         // sort message by canid
-        dbcfd.messages.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+        dbcfd.messages.sort_by(|a, b| a.id.raw().cmp(&b.id.raw()));
 
         let outfd = match &self.outfile {
             Some(outfile) => {
@@ -1422,7 +1495,7 @@ use std::rc::{Rc};
             code_output!(code, format!(r#"    {msg_type},"#))?;
         }
         // extract canid from messages vector
-        let canids: Vec<u32> = code.dbcfd.messages.iter().map(|msg| msg.id.to_u32()).collect();
+        let canids: Vec<u32> = code.dbcfd.messages.iter().map(|msg| msg.id.raw()).collect();
 
         let msg_count = code.dbcfd.messages.len();
 
