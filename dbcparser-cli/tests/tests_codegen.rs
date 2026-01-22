@@ -77,6 +77,21 @@ fn codegen_test_with_config(dbc_file_path: &str, ref_rs_file_path: &str, extra_a
     );
 }
 
+fn codegen_no_error(dbc_file_path: &str) {
+    let tmp = assert_fs::fixture::TempDir::new_in(env::current_dir().unwrap()).unwrap();
+    let mut dbc = env::current_dir().unwrap();
+    dbc.push(dbc_file_path);
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(vec!["-i", dbc.to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Generated:"));
+
+    out.assert(predicate::path::exists());
+}
+
 #[test]
 fn generates_test_1_bms() {
     codegen_test_with_config("examples/bms/dbc/BMS.dbc", "examples/bms/bms.rs", vec![]);
@@ -125,4 +140,9 @@ fn generates_test_3_model3() {
         "examples/model3/model3can_blacklist.rs",
         vec!["--blacklist", "257"],
     );
+}
+
+#[test]
+fn generates_test_sections_not_in_order() {
+    codegen_no_error("tests/dbc/not_in_order.dbc");
 }
