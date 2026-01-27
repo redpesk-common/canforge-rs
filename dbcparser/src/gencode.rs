@@ -649,6 +649,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         let type_kamel = self.get_type_kamel();
 
         let data_type = self.get_data_type();
+        let data_usize = self.get_data_usize();
 
         code_output!(code, format!(r#"    /// {msg_type_kamel}::{type_kamel}"#))?;
         if let Some(comment) = code.dbcfd.signal_comment(msg.id, self.name.as_str()) {
@@ -727,7 +728,6 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         if self.size == 1 {
             code_output!(code, r#"            self.value= false;"#)?;
         } else {
-            let data_type = self.get_data_type();
             code_output!(code, format!(r#"            self.value= 0_{data_type};"#))?;
         }
 
@@ -739,15 +739,13 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
 
         if let Some(variants) = code.dbcfd.value_descriptions_for_signal(msg.id, self.name.as_str())
         {
-            let type_kamel = self.get_type_kamel();
             code_output!(
                 code,
                 format!(r#"        pub fn get_as_def (&self) -> Dbc{type_kamel} {{"#)
             )?;
 
             // float is not compatible with match
-            if self.get_data_type() == "f64" {
-                let type_kamel = self.get_type_kamel();
+            if data_type == "f64" {
                 code_output!(
                     code,
                     format!(r#"                Dbc{type_kamel}::_Other(self.get_typed_value())"#)
@@ -779,7 +777,6 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 }
                 code_output!(code, r#"            }"#)?;
             }
-            let type_kamel = self.get_type_kamel();
             code_output!(
                 code,
                 format!(
@@ -812,7 +809,6 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             )?;
         }
 
-        let data_type = self.get_data_type();
         code_output!(
             code,
             format!(
@@ -827,11 +823,9 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             code_output!(code, r#"            let value = value as u8;"#)?;
         } else if code.range_check && self.has_scaling() {
             let min = self.min;
-            let data_type = self.get_data_type();
             let max = self.max;
             let factor = self.factor;
             let offset = self.offset;
-            let data_usize = self.get_data_usize();
             code_output!(
                 code,
                 format!(
@@ -846,7 +840,6 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         }
 
         if self.value_type == ValueType::Signed {
-            let data_usize = self.get_data_usize();
             code_output!(
                 code,
                 format!(
