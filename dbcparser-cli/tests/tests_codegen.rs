@@ -92,6 +92,31 @@ fn codegen_no_error(dbc_file_path: &str) {
     out.assert(predicate::path::exists());
 }
 
+fn codegen_test_snippet(dbc_file_path: &str, snippet: &str, extra_args: Vec<&str>) {
+    let tmp = assert_fs::fixture::TempDir::new_in(env::current_dir().unwrap()).unwrap();
+    let mut dbc = env::current_dir().unwrap();
+    dbc.push(dbc_file_path);
+    let out = tmp.child("__generated.rs");
+
+    let mut args = vec![
+        "-i",
+        dbc.to_str().unwrap(),
+        "-o",
+        out.path().to_str().unwrap(),
+    ];
+    args.extend_from_slice(&extra_args[..]);
+    Command::new(bin_path())
+        .args(args)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Generated:"));
+
+    out.assert(predicate::path::exists());
+
+    let content = fs::read_to_string(out.path()).expect(&format!("Error reading file {}", out.path().to_str().unwrap()));
+    assert!(content.contains(snippet), "Generated output does not contain the expected content");
+}
+
 #[test]
 fn generates_test_1_bms() {
     codegen_test_with_config("examples/bms/dbc/BMS.dbc", "examples/bms/bms.rs", vec![]);
@@ -145,4 +170,32 @@ fn generates_test_3_model3() {
 #[test]
 fn generates_test_sections_not_in_order() {
     codegen_no_error("tests/dbc/not_in_order.dbc");
+}
+
+#[test]
+fn test_variant_generation() {
+    codegen_test_snippet("tests/dbc/val.dbc", r#"pub fn set_raw_value(&mut self, value: u8, data: &mut[u8]) {
+            data.view_bits_mut::<Msb0>()[5..7].store_be(value);
+        }
+
+        pub fn set_as_def (&mut self, signal_def: DbcLengthWithCode, data: &mut[u8])-> Result<(),CanError> {
+            match signal_def {
+                DbcLengthWithCode::TooLong => self.set_raw_value(3, data),
+                DbcLengthWithCode::_Other(x) => self.set_typed_value(x,data)
+            }
+        }
+        fn get_typed_value(&self) -> f64 {
+            self.value
+        }
+
+        fn set_typed_value(&mut self, value:f64, data:&mut [u8]) -> Result<(),CanError> {
+            if value < 0_f64 || 1.5_f64 < value {
+                return Err(CanError::new("invalid-signal-value",format!("value={} not in [0..1.5]",value)));
+            }
+            let factor = 0.5_f64;
+            let offset = 0_f64;
+            let value = ((value - offset) / factor) as u8;
+            data.view_bits_mut::<Msb0>()[5..7].store_be(value);
+            Ok(())
+        }"#, vec![]);
 }
