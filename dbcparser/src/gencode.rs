@@ -781,6 +781,33 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 code,
                 format!(
                     r#"        }}
+        pub fn set_raw_value(&mut self, value: {data_usize}, data: &mut[u8]) {{"#
+                )
+            )?;
+            match self.byte_order {
+                ByteOrder::LittleEndian => {
+                    let (start_bit, end_bit) = self.le_start_end_bit(msg)?;
+                    code_output!(
+                        code,
+                        format!(
+                            r#"            data.view_bits_mut::<Lsb0>()[{start_bit}..{end_bit}].store_le(value);"#
+                        )
+                    )?;
+                },
+                ByteOrder::BigEndian => {
+                    let (start_bit, end_bit) = self.be_start_end_bit(msg)?;
+                    code_output!(
+                        code,
+                        format!(
+                            r#"            data.view_bits_mut::<Msb0>()[{start_bit}..{end_bit}].store_be(value);"#
+                        )
+                    )?;
+                },
+            }
+            code_output!(
+                code,
+                format!(
+                    r#"        }}
 
         pub fn set_as_def (&mut self, signal_def: Dbc{type_kamel}, data: &mut[u8])-> Result<(),CanError> {{
             match signal_def {{"#
@@ -788,11 +815,11 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             )?;
             for variant in variants {
                 let variant_type_kamel = variant.get_type_kamel();
-                let data_value = variant.get_data_value(&data_type);
+                let data_value = variant.id;
                 code_output!(
                     code,
                     format!(
-                        r#"                Dbc{type_kamel}::{variant_type_kamel} => self.set_typed_value({data_value}, data),"#
+                        r#"                Dbc{type_kamel}::{variant_type_kamel} => self.set_raw_value({data_value}, data),"#
                     )
                 )?;
             }
