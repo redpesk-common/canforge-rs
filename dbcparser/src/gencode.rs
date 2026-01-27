@@ -606,28 +606,15 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 )
             )?;
             for variant in variants {
-                if (variant.id as f64) > self.max || (variant.id as f64) < self.min {
-                    let type_kamel = self.get_type_kamel();
-                    let variant_type_kamel = variant.get_type_kamel();
-                    let variant_data_type = variant.get_data_value(&self.get_data_type());
-                    let data_type = self.get_data_type();
-                    code_output!(
-                        code,
-                        format!(
-                            r#"                Dbc{type_kamel}::{variant_type_kamel} => panic! ("(Hoops) impossible conversion {variant_data_type} -> {data_type}"),"#
-                        )
-                    )?;
-                } else {
-                    let type_kamel = self.get_type_kamel();
-                    let variant_type_kamel = variant.get_type_kamel();
-                    let variant_data_type = variant.get_data_value(&self.get_data_type());
-                    code_output!(
-                        code,
-                        format!(
-                            r#"                Dbc{type_kamel}::{variant_type_kamel} => {variant_data_type},"#
-                        )
-                    )?;
-                }
+                let type_kamel = self.get_type_kamel();
+                let variant_type_kamel = variant.get_type_kamel();
+                let variant_data_type = variant.get_data_value(&self.get_data_type());
+                code_output!(
+                    code,
+                    format!(
+                        r#"                Dbc{type_kamel}::{variant_type_kamel} => {variant_data_type},"#
+                    )
+                )?;
             }
             let type_kamel = self.get_type_kamel();
             code_output!(
@@ -769,38 +756,20 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 let mut count = 0;
                 code_output!(code, r#"            match self.get_typed_value() {"#)?;
                 for variant in variants {
-                    if (variant.id as f64) > self.max || (variant.id as f64) < self.min {
-                        let data_value = variant.get_data_value(&self.get_data_type());
-                        let type_kamel = variant.get_type_kamel();
-                        let variant_id = variant.id;
-                        let data_type = self.get_data_type();
-                        let min = self.min;
-                        let max = self.max;
+                    count += 1;
 
-                        code_output!(
-                            code,
-                            format!(
-                                r#"                // WARNING {data_value} => Err(CanError::new("not-in-range","({type_kamel}) !!! {variant_id}({data_type}) not in [{min}..{max}] range")),"#
-                            )
-                        )?;
-                    } else {
-                        count += 1;
-
-                        let data_value = variant.get_data_value(&self.get_data_type());
-                        let type_kamel = self.get_type_kamel();
-                        let variant_type_kamel = variant.get_type_kamel();
-                        code_output!(
-                            code,
-                            format!(
-                                r#"                {data_value} => Dbc{type_kamel}::{variant_type_kamel},"#
-                            )
-                        )?;
-                    }
+                    let data_value = variant.get_data_value(&data_type);
+                    let variant_type_kamel = variant.get_type_kamel();
+                    code_output!(
+                        code,
+                        format!(
+                            r#"                {data_value} => Dbc{type_kamel}::{variant_type_kamel},"#
+                        )
+                    )?;
                 }
 
                 // Help in buggy DBC file support
                 if count != 2 || self.size != 1 {
-                    let type_kamel = self.get_type_kamel();
                     code_output!(
                         code,
                         format!(
@@ -821,33 +790,15 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 )
             )?;
             for variant in variants {
-                if (variant.id as f64) > self.max || (variant.id as f64) < self.min {
-                    let type_kamel = self.get_type_kamel();
-                    let variant_type_kamel = variant.get_type_kamel();
-                    let variant_id = variant.id;
-                    let data_type = self.get_data_type();
-                    let min = self.min;
-                    let max = self.max;
-
-                    code_output!(
-                        code,
-                        format!(
-                            r#"                Dbc{type_kamel}::{variant_type_kamel} => Err(CanError::new("not-in-range","({variant_type_kamel}) !!! {variant_id}({data_type}) not in [{min}..{max}] range")),"#
-                        )
-                    )?;
-                } else {
-                    let type_kamel = self.get_type_kamel();
-                    let variant_type_kamel = variant.get_type_kamel();
-                    let data_value = variant.get_data_value(&self.get_data_type());
-                    code_output!(
-                        code,
-                        format!(
-                            r#"                Dbc{type_kamel}::{variant_type_kamel} => self.set_typed_value({data_value}, data),"#
-                        )
-                    )?;
-                }
+                let variant_type_kamel = variant.get_type_kamel();
+                let data_value = variant.get_data_value(&data_type);
+                code_output!(
+                    code,
+                    format!(
+                        r#"                Dbc{type_kamel}::{variant_type_kamel} => self.set_typed_value({data_value}, data),"#
+                    )
+                )?;
             }
-            let type_kamel = self.get_type_kamel();
             code_output!(
                 code,
                 format!(
