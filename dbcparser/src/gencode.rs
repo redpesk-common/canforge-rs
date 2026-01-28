@@ -142,9 +142,136 @@ macro_rules! code_output {
     ($code:expr, $text:expr $(,)?) => {
         $code.output("", $text)
     };
-    ($code:expr, $fmt:expr, $($args:tt)+) => {
-        $code.output("", format!($fmt, $($args)+))
+}
+
+enum SigMutAction<'a> {
+    SetValue { frame: &'a str },
+    Update { frame: &'a str, listeners: &'a str },
+    Reset,
+}
+
+fn emit_signal_try_borrow_mut(
+    code: &DbcCodeGen,
+    indent: &str,
+    idx: usize,
+    sig_snake: &str,
+    dtype_enum: &str,
+    ok_expr: &str,
+    err_tag: &str,
+) -> io::Result<()> {
+    code_output!(
+        code,
+        format!(
+            r#"
+{indent}match Rc::clone(&self.signals[{idx}]).try_borrow_mut() {{
+{indent}    Ok(mut signal) => {ok_expr},
+{indent}    Err(_) => return Err(CanError::new("{err_tag}","Internal error {sig_snake}:{dtype_enum}")),
+{indent}}}"#
+        )
+    )
+}
+
+fn emit_signal_mut_action(
+    code: &DbcCodeGen,
+    indent: &str,
+    idx: usize,
+    sig: &Signal,
+    action: SigMutAction<'_>,
+    err_tag: &str,
+) -> io::Result<()> {
+    let dtype_enum = sig.get_data_type().to_upper_camel_case();
+    let sig_snake = sig.get_type_snake();
+
+    let ok_expr = match action {
+        SigMutAction::SetValue { frame } => {
+            format!("signal.set_value(CanDbcType::{dtype_enum}({sig_snake}), {frame})?")
+        },
+        SigMutAction::Update { frame, listeners } => {
+            format!("{listeners} += signal.update({frame})")
+        },
+        SigMutAction::Reset => "signal.reset()".to_string(),
     };
+
+    emit_signal_try_borrow_mut(code, indent, idx, &sig_snake, &dtype_enum, &ok_expr, err_tag)
+}
+
+fn find_mux_idx(msg: &Message) -> io::Result<Option<usize>> {
+    let idxs: Vec<usize> = msg
+        .signals
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| {
+            matches!(
+                s.multiplexer_indicator,
+                MultiplexIndicator::Multiplexor
+                    | MultiplexIndicator::MultiplexorAndMultiplexedSignal(_)
+            )
+            .then_some(i)
+        })
+        .collect();
+
+    match idxs.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some(*one)),
+        _ => Err(Error::other(format!(
+            "message:{} has multiple multiplexors; unsupported",
+            msg.get_type_kamel()
+        ))),
+    }
+}
+
+fn validate_mux(msg: &Message, mux_sig: &Signal) -> io::Result<()> {
+    if mux_sig.has_scaling() {
+        return Err(Error::other(format!(
+            "message:{} mux:{} has factor/offset; unsupported (mux must be raw integer)",
+            msg.get_type_kamel(),
+            mux_sig.name
+        )));
+    }
+    if mux_sig.size > 64 {
+        return Err(Error::other(format!(
+            "message:{} mux:{} size > 64 bits; unsupported",
+            msg.get_type_kamel(),
+            mux_sig.name
+        )));
+    }
+    Ok(())
+}
+
+fn has_multiplexed_signals(msg: &Message) -> bool {
+    msg.signals
+        .iter()
+        .any(|s| matches!(s.multiplexer_indicator, MultiplexIndicator::MultiplexedSignal(_)))
+}
+
+fn uses_extended_multiplexing(dbc: &str) -> bool {
+    let mut in_ns = false;
+
+    for line in dbc.lines() {
+        let t = line.trim();
+
+        if t == "NS_ :" {
+            in_ns = true;
+            continue;
+        }
+
+        if in_ns {
+            if t.is_empty() {
+                in_ns = false; // end of NS_ block
+            }
+            continue;
+        }
+
+        // Real SG_MUL_VAL_ statements have arguments (more than 1 token).
+        let mut it = t.split_whitespace();
+        if let Some(first) = it.next() {
+            if first == "SG_MUL_VAL_" && it.next().is_some() {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 fn get_ctime(format: &str) -> io::Result<String> {
@@ -385,6 +512,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
     fn gen_signal_trait(&self, code: &DbcCodeGen, msg: &Message) -> io::Result<()> {
         let msg_type = msg.get_type_kamel();
         let sig_type = self.get_type_kamel();
+        let raw_ty = self.get_data_usize();
 
         let read_fn = match self.byte_order {
             ByteOrder::LittleEndian => {
@@ -435,30 +563,40 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         fn update(&mut self, frame: &CanMsgData) -> i32 {{
             match frame.opcode {{
                 CanBcmOpCode::RxChanged => {{
-                    let value = {read_fn};"#
+                    let raw: {raw_ty} = {read_fn};"#
             )
         )?;
 
-        let new_value_code = {
-            if self.size == 1 {
-                "value == 1"
-            } else if self.has_scaling() {
-                &format!("(value as f64) * {}_f64 + {}_f64", self.factor, self.offset)
+        let data_type = self.get_data_type();
+        let new_value_code = if self.size == 1 {
+            "raw == 1".to_string()
+        } else if self.has_scaling() {
+            if self.value_type == ValueType::Signed {
+                let isz = self.get_data_isize();
+                format!(
+                    "(({isz}::from_ne_bytes(raw.to_ne_bytes())) as f64) * {}_f64 + {}_f64",
+                    self.factor, self.offset
+                )
             } else {
-                "value"
+                format!("(raw as f64) * {}_f64 + {}_f64", self.factor, self.offset)
             }
+        } else if self.value_type == ValueType::Signed {
+            let isz = self.get_data_isize();
+            format!("{isz}::from_ne_bytes(raw.to_ne_bytes())")
+        } else {
+            "raw".to_string()
         };
 
         code_output!(
             code,
             format!(
                 r#"
-                    let newval = {new_value_code}
+                    let newval = {new_value_code};
                     let changed = match self.value {{
                         None => true,
-                        Some(old) => old != value,
+                        Some(old) => old != newval,
                     }};
-                    self.value = Some(value);
+                    self.value = Some(newval);
                     if changed {{
                         self.status= CanDataStatus::Updated;
                         self.stamp= frame.stamp;
@@ -468,7 +606,6 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             )
         )?;
 
-        let data_type = self.get_data_type();
         let dtype_enum = data_type.as_str().to_upper_camel_case();
 
         code_output!(
@@ -992,14 +1129,14 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
 "#
         )?;
 
-        // set all message signals values
+        // build message signal:type list
         let args: Vec<String> = self
             .signals
             .iter()
             .map(|signal| format!("{}: {}", signal.get_type_snake(), signal.get_data_type()))
             .collect();
-
         let args_str = args.join(", ");
+
         code_output!(
             code,
             format!(
@@ -1009,20 +1146,105 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
             )
         )?;
 
-        for idx in 0..self.signals.len() {
-            let dtype_enum = self.signals[idx].get_data_type().to_upper_camel_case();
-            let sig_snake = self.signals[idx].get_type_snake();
+        // Mux validation (generator-time):
+        let mux_idx = find_mux_idx(self)?;
+        if has_multiplexed_signals(self) && mux_idx.is_none() {
+            return Err(Error::other(format!(
+                "message:{} has multiplexed signals but no multiplexor",
+                self.get_type_kamel()
+            )));
+        }
+
+        if let Some(mux_idx) = mux_idx {
+            let mux_sig = &self.signals[mux_idx];
+            validate_mux(self, mux_sig)?;
+
+            let mux_arg = mux_sig.get_type_snake();
+
+            // Compute multiplexor RAW value (DBC selectors are defined on raw values).
+            let mux_raw_expr = if mux_sig.size == 1 {
+                format!(
+                    r#"
+            if {mux_arg} {{ 1 }} else {{ 0 }}"#
+                )
+            } else if mux_sig.value_type == ValueType::Signed {
+                format!(r#"({mux_arg} as i64) as u64"#)
+            } else {
+                format!(r#"{mux_arg} as u64"#)
+            };
 
             code_output!(
                 code,
                 format!(
-                    r#"            match Rc::clone (&self.signals[{idx}]).try_borrow_mut() {{
-                Ok(mut signal) => signal.set_value(CanDbcType::{dtype_enum}({sig_snake}), frame)?,
-                Err(_) => return Err(CanError::new("signal-set-values-fail","Internal error {sig_snake}:{dtype_enum}")),
-            }}"#
+                    r#"
+            let __mux_raw_value: u64 = {mux_raw_expr};"#
                 )
             )?;
+
+            // 1) Always pack the multiplexor itself first.
+            emit_signal_mut_action(
+                code,
+                "            ",
+                mux_idx,
+                mux_sig,
+                SigMutAction::SetValue { frame: "frame" },
+                "signal-set-values-fail",
+            )?;
+
+            // 2) Pack other signals (plain always, multiplexed only if mux matches).
+            for idx in 0..self.signals.len() {
+                if idx == mux_idx {
+                    continue;
+                }
+
+                match self.signals[idx].multiplexer_indicator {
+                    MultiplexIndicator::Plain
+                    | MultiplexIndicator::Multiplexor
+                    | MultiplexIndicator::MultiplexorAndMultiplexedSignal(_) => {
+                        emit_signal_mut_action(
+                            code,
+                            "            ",
+                            idx,
+                            &self.signals[idx],
+                            SigMutAction::SetValue { frame: "frame" },
+                            "signal-set-values-fail",
+                        )?;
+                    },
+                    MultiplexIndicator::MultiplexedSignal(mux_val) => {
+                        code_output!(
+                            code,
+                            format!(
+                                r#"
+            if __mux_raw_value == {mux_val} {{
+                "#
+                            )
+                        )?;
+                        emit_signal_mut_action(
+                            code,
+                            "                ",
+                            idx,
+                            &self.signals[idx],
+                            SigMutAction::SetValue { frame: "frame" },
+                            "signal-set-values-fail",
+                        )?;
+                        code_output!(code, r#"            }"#)?;
+                    },
+                }
+            }
+        } else {
+            // Non-multiplexed message: pack all signals.
+            for idx in 0..self.signals.len() {
+                emit_signal_mut_action(
+                    code,
+                    "            ",
+                    idx,
+                    &self.signals[idx],
+                    SigMutAction::SetValue { frame: "frame" },
+                    "signal-set-values-fail",
+                )?;
+            }
         }
+
         code_output!(
             code,
             r#"
@@ -1047,18 +1269,13 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
         )?;
 
         for idx in 0..self.signals.len() {
-            let dtype_enum = self.signals[idx].get_data_type().to_upper_camel_case();
-            let sig_snake = self.signals[idx].get_type_snake();
-
-            code_output!(
+            emit_signal_mut_action(
                 code,
-                format!(
-                    r#"
-            match Rc::clone (&self.signals[{idx}]).try_borrow_mut() {{
-                Ok(mut signal) => signal.reset(),
-                Err(_) => return Err(CanError::new("signal-reset-fail","Internal error {sig_snake}:{dtype_enum}")),
-            }}"#
-                )
+                "            ",
+                idx,
+                &self.signals[idx],
+                SigMutAction::Reset,
+                "signal-reset-fail",
             )?;
         }
         code_output!(
@@ -1073,22 +1290,142 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
             self.listeners= 0;"#
         )?;
 
-        for idx in 0..self.signals.len() {
-            let dtype_enum = self.signals[idx].get_data_type().to_upper_camel_case();
-            let sig_snake = self.signals[idx].get_type_snake();
+        // Mux validation (generator-time):
+        let mux_idx = find_mux_idx(self)?;
+        if has_multiplexed_signals(self) && mux_idx.is_none() {
+            return Err(Error::other(format!(
+                "message:{} has multiplexed signals but no multiplexor",
+                self.get_type_kamel()
+            )));
+        }
 
-            code_output!(
+        if let Some(mux_idx) = mux_idx {
+            let mux_sig = &self.signals[mux_idx];
+            validate_mux(self, mux_sig)?;
+
+            // Read multiplexor RAW value from frame bits.
+            let mux_read_fn = match mux_sig.byte_order {
+                ByteOrder::LittleEndian => {
+                    let (start_bit, end_bit) = mux_sig.le_start_end_bit(self)?;
+                    format!(
+                        "frame.data.view_bits::<Lsb0>()[{start}..{end}].load_le::<{typ}>()",
+                        typ = mux_sig.get_data_usize(),
+                        start = start_bit,
+                        end = end_bit,
+                    )
+                },
+                ByteOrder::BigEndian => {
+                    let (start_bit, end_bit) = mux_sig.be_start_end_bit(self)?;
+                    format!(
+                        "frame.data.view_bits::<Msb0>()[{start}..{end}].load_be::<{typ}>()",
+                        typ = mux_sig.get_data_usize(),
+                        start = start_bit,
+                        end = end_bit,
+                    )
+                },
+            };
+
+            if mux_sig.value_type == ValueType::Signed {
+                let data_isize = mux_sig.get_data_isize();
+                code_output!(
+                    code,
+                    format!(
+                        r#"
+            let __mux_raw_value: u64 = {{
+            let value = {mux_read_fn};
+            let value = ({data_isize}::from_ne_bytes(value.to_ne_bytes())) as i64;
+            value as u64
+    }};"#
+                    )
+                )?;
+            } else {
+                code_output!(
+                    code,
+                    format!(
+                        r#"
+            let __mux_raw_value: u64 = ({mux_read_fn}) as u64;"#
+                    )
+                )?;
+            }
+
+            // Always update the multiplexor itself first.
+            emit_signal_mut_action(
                 code,
-                format!(
-                    r#"            match Rc::clone (&self.signals[{idx}]).try_borrow_mut() {{
-                Ok(mut signal) => self.listeners += signal.update(frame),
-                Err(_) => return Err(CanError::new("signal-update-fail","Internal error {sig_snake}:{dtype_enum}")),
-            }}"#
-                )
+                "            ",
+                mux_idx,
+                &self.signals[mux_idx],
+                SigMutAction::Update { frame: "frame", listeners: "self.listeners" },
+                "signal-update-fail",
             )?;
+
+            // Update/reset other signals based on mux value.
+            for idx in 0..self.signals.len() {
+                if idx == mux_idx {
+                    continue;
+                }
+
+                match self.signals[idx].multiplexer_indicator {
+                    MultiplexIndicator::MultiplexedSignal(mux_val) => {
+                        code_output!(
+                            code,
+                            format!(
+                                r#"
+            if __mux_raw_value == {mux_val} {{
+                "#
+                            )
+                        )?;
+                        emit_signal_mut_action(
+                            code,
+                            "                ",
+                            idx,
+                            &self.signals[idx],
+                            SigMutAction::Update { frame: "frame", listeners: "self.listeners" },
+                            "signal-update-fail",
+                        )?;
+                        code_output!(
+                            code,
+                            r#"
+            } else {"#
+                        )?;
+                        emit_signal_mut_action(
+                            code,
+                            "                ",
+                            idx,
+                            &self.signals[idx],
+                            SigMutAction::Reset,
+                            "signal-update-fail",
+                        )?;
+                        code_output!(code, r#"            }"#)?;
+                    },
+
+                    MultiplexIndicator::Plain
+                    | MultiplexIndicator::Multiplexor
+                    | MultiplexIndicator::MultiplexorAndMultiplexedSignal(_) => {
+                        emit_signal_mut_action(
+                            code,
+                            "            ",
+                            idx,
+                            &self.signals[idx],
+                            SigMutAction::Update { frame: "frame", listeners: "self.listeners" },
+                            "signal-update-fail",
+                        )?;
+                    },
+                }
+            }
+        } else {
+            // Non-multiplexed message
+            for idx in 0..self.signals.len() {
+                emit_signal_mut_action(
+                    code,
+                    "            ",
+                    idx,
+                    &self.signals[idx],
+                    SigMutAction::Update { frame: "frame", listeners: "self.listeners" },
+                    "signal-update-fail",
+                )?;
+            }
         }
         let msg_type = self.get_type_kamel();
-
         code_output!(
             code,
             format!(
@@ -1149,7 +1486,6 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
         let name = &self.name;
         let id = self.id.raw();
         let size = self.size;
-
         code_output!(
             code,
             format!(
@@ -1206,7 +1542,6 @@ pub mod {msg_mod} {{ /// Message name space
     }
 "#
         )?;
-
         // signals structures and implementation
         for signal in &self.signals {
             signal.gen_code_signal(code, self)?;
@@ -1357,6 +1692,10 @@ impl DbcParser {
 
         // open and parse dbc input file
         let buffer = fs::read_to_string(infile.as_str())?;
+
+        if uses_extended_multiplexing(&buffer) {
+            return Err(io::Error::other("DBC uses SG_MUL_VAL_ (extended multiplexing) which is not supported by this generator"));
+        }
         let mut dbcfd = match Dbc::try_from(buffer.as_str()) {
             Err(error) => return Err(Error::other(error.to_string())),
             Ok(dbcfd) => dbcfd,
