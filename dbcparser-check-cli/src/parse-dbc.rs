@@ -56,7 +56,7 @@ fn main() -> io::Result<()> {
     if args.len() != 3 {
         log::info!("SYNTAX-Error => can-dbc '/xxx/file.dbc' '/yyyy/candump.log'");
         log::info!(
-            "example: {} 'examples/dbc-log/model3can.dbc' 'examples/dbc-log/candump.log'",
+            "example: {} 'examples/dbc-log/canforge_dbc_complete_norm.dbc' 'examples/dbc-log/candump.log'",
             args[0]
         );
         return Err(Error::other("invalid input arguments"));
