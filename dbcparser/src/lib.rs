@@ -14,4 +14,3 @@ pub use crate::gencode::*;
 pub mod prelude {
     pub use crate::gencode::*;
 }
-

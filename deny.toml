@@ -12,4 +12,5 @@ allow = [
   "Zlib",
   "Unicode-3.0",   # required by unicode-ident
   "BSL-1.0",       # Boost
+  "BSD-3-Clause",
 ]
