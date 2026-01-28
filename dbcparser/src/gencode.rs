@@ -221,9 +221,9 @@ impl ValCodeGen for ValDescription {
     #[allow(clippy::cast_possible_truncation)]
     fn get_data_value(&self, data: &str) -> String {
         match data {
-            "bool" => ((self.id as i64) == 1).to_string(),
+            "bool" => (self.id == 1).to_string(),
             "f64" => format!("{}_f64", self.id),
-            _ => format!("{}_{}", self.id as i64, data),
+            _ => format!("{}_{}", self.id, data),
         }
     }
 }
@@ -788,7 +788,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 code_output!(
                     code,
                     format!(
-                        r#"                Dbc{type_kamel}::{variant_type_kamel} => self.set_raw_value({data_value}, data),"#
+                        r#"                Dbc{type_kamel}::{variant_type_kamel} => Ok(self.set_raw_value({data_value}, data)),"#
                     )
                 )?;
             }
