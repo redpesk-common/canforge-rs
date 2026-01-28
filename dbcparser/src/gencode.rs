@@ -606,28 +606,15 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 )
             )?;
             for variant in variants {
-                if (variant.id as f64) > self.max || (variant.id as f64) < self.min {
-                    let type_kamel = self.get_type_kamel();
-                    let variant_type_kamel = variant.get_type_kamel();
-                    let variant_data_type = variant.get_data_value(&self.get_data_type());
-                    let data_type = self.get_data_type();
-                    code_output!(
-                        code,
-                        format!(
-                            r#"                Dbc{type_kamel}::{variant_type_kamel} => panic! ("(Hoops) impossible conversion {variant_data_type} -> {data_type}"),"#
-                        )
-                    )?;
-                } else {
-                    let type_kamel = self.get_type_kamel();
-                    let variant_type_kamel = variant.get_type_kamel();
-                    let variant_data_type = variant.get_data_value(&self.get_data_type());
-                    code_output!(
-                        code,
-                        format!(
-                            r#"                Dbc{type_kamel}::{variant_type_kamel} => {variant_data_type},"#
-                        )
-                    )?;
-                }
+                let type_kamel = self.get_type_kamel();
+                let variant_type_kamel = variant.get_type_kamel();
+                let variant_data_type = variant.get_data_value(&self.get_data_type());
+                code_output!(
+                    code,
+                    format!(
+                        r#"                Dbc{type_kamel}::{variant_type_kamel} => {variant_data_type},"#
+                    )
+                )?;
             }
             let type_kamel = self.get_type_kamel();
             code_output!(
@@ -662,6 +649,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         let type_kamel = self.get_type_kamel();
 
         let data_type = self.get_data_type();
+        let data_usize = self.get_data_usize();
 
         code_output!(code, format!(r#"    /// {msg_type_kamel}::{type_kamel}"#))?;
         if let Some(comment) = code.dbcfd.signal_comment(msg.id, self.name.as_str()) {
@@ -740,7 +728,6 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         if self.size == 1 {
             code_output!(code, r#"            self.value= false;"#)?;
         } else {
-            let data_type = self.get_data_type();
             code_output!(code, format!(r#"            self.value= 0_{data_type};"#))?;
         }
 
@@ -752,15 +739,13 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
 
         if let Some(variants) = code.dbcfd.value_descriptions_for_signal(msg.id, self.name.as_str())
         {
-            let type_kamel = self.get_type_kamel();
             code_output!(
                 code,
                 format!(r#"        pub fn get_as_def (&self) -> Dbc{type_kamel} {{"#)
             )?;
 
             // float is not compatible with match
-            if self.get_data_type() == "f64" {
-                let type_kamel = self.get_type_kamel();
+            if data_type == "f64" {
                 code_output!(
                     code,
                     format!(r#"                Dbc{type_kamel}::_Other(self.get_typed_value())"#)
@@ -769,38 +754,20 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 let mut count = 0;
                 code_output!(code, r#"            match self.get_typed_value() {"#)?;
                 for variant in variants {
-                    if (variant.id as f64) > self.max || (variant.id as f64) < self.min {
-                        let data_value = variant.get_data_value(&self.get_data_type());
-                        let type_kamel = variant.get_type_kamel();
-                        let variant_id = variant.id;
-                        let data_type = self.get_data_type();
-                        let min = self.min;
-                        let max = self.max;
+                    count += 1;
 
-                        code_output!(
-                            code,
-                            format!(
-                                r#"                // WARNING {data_value} => Err(CanError::new("not-in-range","({type_kamel}) !!! {variant_id}({data_type}) not in [{min}..{max}] range")),"#
-                            )
-                        )?;
-                    } else {
-                        count += 1;
-
-                        let data_value = variant.get_data_value(&self.get_data_type());
-                        let type_kamel = self.get_type_kamel();
-                        let variant_type_kamel = variant.get_type_kamel();
-                        code_output!(
-                            code,
-                            format!(
-                                r#"                {data_value} => Dbc{type_kamel}::{variant_type_kamel},"#
-                            )
-                        )?;
-                    }
+                    let data_value = variant.get_data_value(&data_type);
+                    let variant_type_kamel = variant.get_type_kamel();
+                    code_output!(
+                        code,
+                        format!(
+                            r#"                {data_value} => Dbc{type_kamel}::{variant_type_kamel},"#
+                        )
+                    )?;
                 }
 
                 // Help in buggy DBC file support
                 if count != 2 || self.size != 1 {
-                    let type_kamel = self.get_type_kamel();
                     code_output!(
                         code,
                         format!(
@@ -810,7 +777,33 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 }
                 code_output!(code, r#"            }"#)?;
             }
-            let type_kamel = self.get_type_kamel();
+            code_output!(
+                code,
+                format!(
+                    r#"        }}
+        pub fn set_raw_value(&mut self, value: {data_usize}, data: &mut[u8]) {{"#
+                )
+            )?;
+            match self.byte_order {
+                ByteOrder::LittleEndian => {
+                    let (start_bit, end_bit) = self.le_start_end_bit(msg)?;
+                    code_output!(
+                        code,
+                        format!(
+                            r#"            data.view_bits_mut::<Lsb0>()[{start_bit}..{end_bit}].store_le(value);"#
+                        )
+                    )?;
+                },
+                ByteOrder::BigEndian => {
+                    let (start_bit, end_bit) = self.be_start_end_bit(msg)?;
+                    code_output!(
+                        code,
+                        format!(
+                            r#"            data.view_bits_mut::<Msb0>()[{start_bit}..{end_bit}].store_be(value);"#
+                        )
+                    )?;
+                },
+            }
             code_output!(
                 code,
                 format!(
@@ -821,33 +814,15 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 )
             )?;
             for variant in variants {
-                if (variant.id as f64) > self.max || (variant.id as f64) < self.min {
-                    let type_kamel = self.get_type_kamel();
-                    let variant_type_kamel = variant.get_type_kamel();
-                    let variant_id = variant.id;
-                    let data_type = self.get_data_type();
-                    let min = self.min;
-                    let max = self.max;
-
-                    code_output!(
-                        code,
-                        format!(
-                            r#"                Dbc{type_kamel}::{variant_type_kamel} => Err(CanError::new("not-in-range","({variant_type_kamel}) !!! {variant_id}({data_type}) not in [{min}..{max}] range")),"#
-                        )
-                    )?;
-                } else {
-                    let type_kamel = self.get_type_kamel();
-                    let variant_type_kamel = variant.get_type_kamel();
-                    let data_value = variant.get_data_value(&self.get_data_type());
-                    code_output!(
-                        code,
-                        format!(
-                            r#"                Dbc{type_kamel}::{variant_type_kamel} => self.set_typed_value({data_value}, data),"#
-                        )
-                    )?;
-                }
+                let variant_type_kamel = variant.get_type_kamel();
+                let data_value = variant.id;
+                code_output!(
+                    code,
+                    format!(
+                        r#"                Dbc{type_kamel}::{variant_type_kamel} => self.set_raw_value({data_value}, data),"#
+                    )
+                )?;
             }
-            let type_kamel = self.get_type_kamel();
             code_output!(
                 code,
                 format!(
@@ -861,7 +836,6 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             )?;
         }
 
-        let data_type = self.get_data_type();
         code_output!(
             code,
             format!(
@@ -876,11 +850,9 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             code_output!(code, r#"            let value = value as u8;"#)?;
         } else if code.range_check && self.has_scaling() {
             let min = self.min;
-            let data_type = self.get_data_type();
             let max = self.max;
             let factor = self.factor;
             let offset = self.offset;
-            let data_usize = self.get_data_usize();
             code_output!(
                 code,
                 format!(
@@ -895,7 +867,6 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         }
 
         if self.value_type == ValueType::Signed {
-            let data_usize = self.get_data_usize();
             code_output!(
                 code,
                 format!(
