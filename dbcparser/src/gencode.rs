@@ -438,48 +438,34 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             )
         )?;
 
-        if self.value_type == ValueType::Signed {
-            let data_isize = self.get_data_isize();
-            code_output!(
-                code,
-                format!(
-                    r#"                    let value = {data_isize}::from_ne_bytes(value.to_ne_bytes());"#
-                )
-            )?;
-        }
+        let new_value_code = {
+            if self.size == 1 {
+                "value == 1"
+            } else if self.has_scaling() {
+                &format!("(value as f64) * {}_f64 + {}_f64", self.factor, self.offset)
+            } else {
+                "value"
+            }
+        };
 
-        if self.size == 1 {
-            code_output!(code, "                    self.value= value == 1;")?;
-        } else if self.has_scaling() {
-            let offset = self.offset;
-            let factor = self.factor;
-            code_output!(
-                code,
-                format!(
-                    r#"                    let factor = {factor}_f64;
-                    let offset = {offset}_f64;
-                    let newval= (value as f64) * factor + offset;
-                    if newval != self.value {{
-                        self.value= newval;
+        code_output!(
+            code,
+            format!(
+                r#"
+                    let newval = {new_value_code}
+                    let changed = match self.value {{
+                        None => true,
+                        Some(old) => old != value,
+                    }};
+                    self.value = Some(value);
+                    if changed {{
                         self.status= CanDataStatus::Updated;
                         self.stamp= frame.stamp;
-                    }} else {{
+                }} else {{
                         self.status= CanDataStatus::Unchanged;
-                    }}"#
-                )
-            )?;
-        } else {
-            code_output!(
-                code,
-                r#"                    if self.value != value {
-                        self.value= value;
-                        self.status= CanDataStatus::Updated;
-                        self.stamp= frame.stamp;
-                    } else {
-                        self.status= CanDataStatus::Unchanged;
-                    }"#
-            )?;
-        }
+                }}"#
+            )
+        )?;
 
         let data_type = self.get_data_type();
         let dtype_enum = data_type.as_str().to_upper_camel_case();
@@ -691,7 +677,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         status: CanDataStatus,
         name: &'static str,
         stamp: u64,
-        value: {data_type},
+        value: Option<{data_type}>,
     }}
 "#
             )
@@ -707,34 +693,17 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         pub fn new() -> Rc<RefCell<Box<dyn CanDbcSignal>>> {{
             Rc::new(RefCell::new(Box::new({type_kamel} {{
                 status: CanDataStatus::Unset,
-                name:"{type_kamel}","#
-            )
-        )?;
-        if self.size == 1 {
-            code_output!(code, r#"                value: false,"#)?;
-        } else {
-            code_output!(code, format!(r#"                value: 0_{data_type},"#))?;
-        }
-
-        code_output!(
-            code,
-            r#"                stamp: 0,
+                name:"{type_kamel}",
+                value: None,
+                stamp: 0,
                 callback: None,
-            })))
-        }
+            }})))
+        }}
 
-        fn reset_value(&mut self) {"#
-        )?;
-        if self.size == 1 {
-            code_output!(code, r#"            self.value= false;"#)?;
-        } else {
-            code_output!(code, format!(r#"            self.value= 0_{data_type};"#))?;
-        }
-
-        code_output!(
-            code,
-            r#"        }
-"#
+        fn reset_value(&mut self) {{
+            self.value= None;
+            }}"#
+            )
         )?;
 
         if let Some(variants) = code.dbcfd.value_descriptions_for_signal(msg.id, self.name.as_str())
@@ -840,7 +809,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             code,
             format!(
                 r#"        fn get_typed_value(&self) -> {data_type} {{
-            self.value
+            self.value.unwrap_or_default()
         }}
 
         fn set_typed_value(&mut self, value:{data_type}, data:&mut [u8]) -> Result<(),CanError> {{"#
