@@ -17,9 +17,3 @@ internal-parser-tests = []
 [lib]
 name = "dbcparser"
 path = "src/lib.rs"
-
-[[test]]
-name = "tests"
-path = "tests/test.rs"
-harness = true
-required-features = ["internal-parser-tests"]

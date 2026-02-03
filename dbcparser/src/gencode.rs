@@ -221,9 +221,9 @@ impl ValCodeGen for ValDescription {
     #[allow(clippy::cast_possible_truncation)]
     fn get_data_value(&self, data: &str) -> String {
         match data {
-            "bool" => ((self.id as i64) == 1).to_string(),
+            "bool" => (self.id == 1).to_string(),
             "f64" => format!("{}_f64", self.id),
-            _ => format!("{}_{}", self.id as i64, data),
+            _ => format!("{}_{}", self.id, data),
         }
     }
 }
@@ -412,7 +412,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         code_output!(
             code,
             format!(
-                r#"    /// {msg_type}::{sig_type} public api (CanDbcSignal trait)
+                r#"
+    /// {msg_type}::{sig_type} public api (CanDbcSignal trait)
     impl CanDbcSignal for {sig_type} {{
 
         fn get_name(&self) -> &'static str {{
@@ -473,7 +474,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         code_output!(
             code,
             format!(
-                r#"                }},
+                r#"
+                }},
                 CanBcmOpCode::RxTimeout => {{
                     self.status=CanDataStatus::Timeout;
                 }},
@@ -510,7 +512,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         if code.serde_json {
             code_output!(
                 code,
-                r#"        fn to_json(&self) -> String {
+                r#"
+        fn to_json(&self) -> String {
             match serde_json::to_string(self) {
                 Ok(json)=> json,
                 _ => "serde-json-error".to_owned()
@@ -524,7 +527,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         code_output!(
             code,
             format!(
-                r#"        fn reset(&mut self) {{
+                r#"
+        fn reset(&mut self) {{
             self.stamp=0;
             self.reset_value();
             self.status=CanDataStatus::Unset;
@@ -555,7 +559,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         code_output!(
             code,
             format!(
-                r#"        pub const {name_uc}_MIN: {typ} = {min}_{typ};
+                r#"
+        pub const {name_uc}_MIN: {typ} = {min}_{typ};
         pub const {name_uc}_MAX: {typ} = {max}_{typ};
 "#
             )
@@ -583,7 +588,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             code_output!(
                 code,
                 format!(
-                    r#"        _Other({data_type}),
+                    r#"
+        _Other({data_type}),
     }}
 
     impl From<Dbc{type_kamel}> for {data_type} {{
@@ -606,7 +612,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             code_output!(
                 code,
                 format!(
-                    r#"                Dbc{type_kamel}::_Other(x) => x
+                    r#"
+                Dbc{type_kamel}::_Other(x) => x
             }}
         }}
     }}
@@ -649,7 +656,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         code_output!(
             code,
             format!(
-                r#"    /// - Min: {min}
+                r#"
+    /// - Min: {min}
     /// - Max: {max}
     /// - Unit: {unit:?}
     /// - Receivers: {receivers}
@@ -673,7 +681,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         code_output!(
             code,
             format!(
-                r#"        callback: Option<RefCell<Box<dyn CanSigCtrl>>>,
+                r#"
+        callback: Option<RefCell<Box<dyn CanSigCtrl>>>,
         status: CanDataStatus,
         name: &'static str,
         stamp: u64,
@@ -689,7 +698,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         code_output!(
             code,
             format!(
-                r#"    impl {type_kamel}  {{
+                r#"
+    impl {type_kamel}  {{
         pub fn new() -> Rc<RefCell<Box<dyn CanDbcSignal>>> {{
             Rc::new(RefCell::new(Box::new({type_kamel} {{
                 status: CanDataStatus::Unset,
@@ -749,7 +759,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             code_output!(
                 code,
                 format!(
-                    r#"        }}
+                    r#"
+        }}
         pub fn set_raw_value(&mut self, value: {data_usize}, data: &mut[u8]) {{"#
                 )
             )?;
@@ -776,8 +787,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             code_output!(
                 code,
                 format!(
-                    r#"        }}
-
+                    r#"
+        }}
         pub fn set_as_def (&mut self, signal_def: Dbc{type_kamel}, data: &mut[u8])-> Result<(),CanError> {{
             match signal_def {{"#
                 )
@@ -788,7 +799,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 code_output!(
                     code,
                     format!(
-                        r#"                Dbc{type_kamel}::{variant_type_kamel} => self.set_raw_value({data_value}, data),"#
+                        r#"                Dbc{type_kamel}::{variant_type_kamel} => Ok(self.set_raw_value({data_value}, data)),"#
                     )
                 )?;
             }
@@ -808,7 +819,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         code_output!(
             code,
             format!(
-                r#"        fn get_typed_value(&self) -> {data_type} {{
+                r#"
+        fn get_typed_value(&self) -> {data_type} {{
             self.value.unwrap_or_default()
         }}
 
@@ -825,7 +837,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             code_output!(
                 code,
                 format!(
-                    r#"            if value < {min}_{data_type} || {max}_{data_type} < value {{
+                    r#"
+            if value < {min}_{data_type} || {max}_{data_type} < value {{
                 return Err(CanError::new("invalid-signal-value",format!("value={{}} not in [{min}..{max}]",value)));
             }}
             let factor = {factor}_f64;
@@ -871,7 +884,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         code_output!(
             code,
             format!(
-                r#"            Ok(())
+                r#"
+            Ok(())
         }}
 
     }} // {msg_type}::{sig_type} impl end
@@ -900,7 +914,8 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         code_output!(
             code,
             format!(
-                r#"    impl fmt::Display for {sig_type} {{
+                r#"
+    impl fmt::Display for {sig_type} {{
         fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {{
             let text=format!("{sig_type}:{{}}", self.get_typed_value());
             fmt.pad(&text)
@@ -940,7 +955,8 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
         code_output!(
             code,
             format!(
-                r#"    pub struct DbcMessage {{
+                r#"
+    pub struct DbcMessage {{
         callback: Option<RefCell<Box<dyn CanMsgCtrl>>>,
         signals: [Rc<RefCell<Box<dyn CanDbcSignal>>>;{sig_count}],
         name: &'static str,
@@ -969,7 +985,8 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
         }
         code_output!(
             code,
-            r#"                ],
+            r#"
+                ],
             })))
         }
 "#
@@ -986,7 +1003,8 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
         code_output!(
             code,
             format!(
-                r#"        pub fn set_values(&mut self, {args_str}, frame: &mut[u8]) -> Result<&mut Self, CanError> {{
+                r#"
+        pub fn set_values(&mut self, {args_str}, frame: &mut[u8]) -> Result<&mut Self, CanError> {{
 "#
             )
         )?;
@@ -1007,7 +1025,8 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
         }
         code_output!(
             code,
-            r#"            Ok(self)
+            r#"
+            Ok(self)
         }
     }
 "#
@@ -1020,7 +1039,8 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
         // build message signal:type list
         code_output!(
             code,
-            r#"    impl CanDbcMessage for DbcMessage {
+            r#"
+    impl CanDbcMessage for DbcMessage {
         fn reset(&mut self) -> Result<(), CanError> {
             self.status=CanBcmOpCode::Unknown;
             self.stamp=0;"#
@@ -1033,7 +1053,8 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
             code_output!(
                 code,
                 format!(
-                    r#"            match Rc::clone (&self.signals[{idx}]).try_borrow_mut() {{
+                    r#"
+            match Rc::clone (&self.signals[{idx}]).try_borrow_mut() {{
                 Ok(mut signal) => signal.reset(),
                 Err(_) => return Err(CanError::new("signal-reset-fail","Internal error {sig_snake}:{dtype_enum}")),
             }}"#
@@ -1042,7 +1063,8 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
         }
         code_output!(
             code,
-            r#"        Ok(())
+            r#"
+        Ok(())
     }
 
         fn update(&mut self, frame: &CanMsgData) -> Result<(), CanError> {
@@ -1070,7 +1092,8 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
         code_output!(
             code,
             format!(
-                r#"            match &self.callback {{
+                r#"
+            match &self.callback {{
                 None => {{}},
                 Some(callback) => {{
                     match callback.try_borrow() {{
@@ -1130,7 +1153,8 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
         code_output!(
             code,
             format!(
-                r#"/// {name} Message
+                r#"
+/// {name} Message
 /// - ID: {id} (0x{id:x})
 /// - Size: {size} bytes"#
             )
@@ -1153,7 +1177,8 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
         code_output!(
             code,
             format!(
-                r#"pub mod {msg_mod} {{ /// Message name space
+                r#"
+pub mod {msg_mod} {{ /// Message name space
     use sockcan::prelude::*;
     use bitvec::prelude::*;
     use std::any::Any;
@@ -1177,7 +1202,8 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
         }
         code_output!(
             code,
-            r#"    }
+            r#"
+    }
 "#
         )?;
 
@@ -1192,7 +1218,8 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
         code_output!(
             code,
             format!(
-                r#"}} // end {msg_type} message
+                r#"
+}} // end {msg_type} message
 "#
             )
         )?;
@@ -1242,7 +1269,8 @@ impl DbcCodeGen {
     }
 }
 
-pub const DEFAULT_HEADER: &str = r#"// -----------------------------------------------------------------------
+pub const DEFAULT_HEADER: &str = r#"
+// -----------------------------------------------------------------------
 //              <- DBC file Rust mapping ->
 // -----------------------------------------------------------------------
 //  Do not edit this file it will be regenerated automatically by cargo.
@@ -1378,7 +1406,8 @@ impl DbcParser {
         code_output!(
             code,
             format!(
-                r#"// --------------------------------------------------------------
+                r#"
+// --------------------------------------------------------------
 //       WARNING: Manual modification will be destroyed
 // --------------------------------------------------------------
 // - code generated from {infile} ({gen_time})
@@ -1416,7 +1445,8 @@ mod {uid} {{
         }
         code_output!(
             code,
-            r#"extern crate bitvec;
+            r#"
+extern crate bitvec;
 use sockcan::prelude::*;
 use std::cell::{RefCell,RefMut};
 use std::rc::{Rc};
@@ -1442,7 +1472,8 @@ use std::rc::{Rc};
         code_output!(
             code,
             format!(
-                r#"}}
+                r#"
+}}
 
 pub struct CanMsgPool {{
     uid: &'static str,
@@ -1464,7 +1495,8 @@ impl CanMsgPool {{
         code_output!(
             code,
             format!(
-                r#"            ]
+                r#"
+            ]
         }}
     }}
 }}
