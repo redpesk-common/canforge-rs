@@ -244,36 +244,6 @@ fn has_multiplexed_signals(msg: &Message) -> bool {
         .any(|s| matches!(s.multiplexer_indicator, MultiplexIndicator::MultiplexedSignal(_)))
 }
 
-fn uses_extended_multiplexing(dbc: &str) -> bool {
-    let mut in_ns = false;
-
-    for line in dbc.lines() {
-        let t = line.trim();
-
-        if t == "NS_ :" {
-            in_ns = true;
-            continue;
-        }
-
-        if in_ns {
-            if t.is_empty() {
-                in_ns = false; // end of NS_ block
-            }
-            continue;
-        }
-
-        // Real SG_MUL_VAL_ statements have arguments (more than 1 token).
-        let mut it = t.split_whitespace();
-        if let Some(first) = it.next() {
-            if first == "SG_MUL_VAL_" && it.next().is_some() {
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
 fn get_ctime(format: &str) -> io::Result<String> {
     let fmt = CString::new(format)
         .map_err(|_| io::Error::other("invalid format string (CString::new)"))?;
@@ -333,6 +303,96 @@ fn is_keyword(ident: &str) -> bool {
 
 fn needs_prefix(ident: &str) -> bool {
     is_keyword(ident) || !ident.starts_with(|c: char| c.is_ascii_alphabetic())
+}
+
+fn int_type_range(typ: &str) -> Option<(i128, i128)> {
+    //  Return inclusive (min,max) bounds for Rust integer primitives.
+    //
+    // This helper runs in the *code generator* only. We intentionally use i128 as a
+    // "wide" intermediate domain so we can represent both:
+    //   - unsigned ranges up to u64::MAX, and
+    //   - signed ranges down to i64::MIN,
+    // in a single type for clamping/formatting.
+    //
+    // The generated code does NOT use i128: we only emit typed literals like
+    // `123_u32`, `-7_i16`, or `u64::MAX`. Therefore no 128-bit operations leak
+    // into the runtime bindings.
+    match typ {
+        "u8" => Some((u8::MIN as i128, u8::MAX as i128)),
+        "u16" => Some((u16::MIN as i128, u16::MAX as i128)),
+        "u32" => Some((u32::MIN as i128, u32::MAX as i128)),
+        "u64" => Some((u64::MIN as i128, u64::MAX as i128)),
+        "i8" => Some((i8::MIN as i128, i8::MAX as i128)),
+        "i16" => Some((i16::MIN as i128, i16::MAX as i128)),
+        "i32" => Some((i32::MIN as i128, i32::MAX as i128)),
+        "i64" => Some((i64::MIN as i128, i64::MAX as i128)),
+        _ => None,
+    }
+}
+
+fn bound_expr(bound: f64, typ: &str, is_min: bool) -> String {
+    //  Build a *compilable* bound expression, clamping to the target type limits when needed.
+    //
+    // This prevents emitting overflowing literals (e.g. `4294970000_u32`) when DBC
+    // min/max exceeds the selected Rust type range. The clamping decision happens
+    // in the generator; the output remains a typed literal or `{typ}::MIN/MAX`.
+    if typ == "f64" {
+        return format!("{bound}_f64");
+    }
+    if let Some((tmin, tmax)) = int_type_range(typ) {
+        let b = bound;
+        let tmin_f = tmin as f64;
+        let tmax_f = tmax as f64;
+
+        if is_min && b < tmin_f {
+            return format!("{typ}::MIN");
+        }
+        if !is_min && b > tmax_f {
+            return format!("{typ}::MAX");
+        }
+
+        // Best-effort: DBC min/max for integer signals should be integral.
+        let ival = b.round() as i128;
+        format!("{ival}_{typ}")
+    } else {
+        // bool or unknown: keep existing behavior (should not be used for bool).
+        format!("{bound}_{typ}")
+    }
+}
+
+fn variant_typed_literal(sig: &Signal, variant_id: i64, data_type: &str) -> String {
+    //  Produce a typed literal for enum/value-description mapping that never overflows.
+    //
+    // Note: computations here are generator-side only. We may use i128 as an intermediate
+    // to clamp values safely (especially when targeting `u64`), but we only emit literals
+    // typed as `u8/u16/u32/u64/i8/i16/i32/i64` (or `{typ}::MIN/MAX`).
+    match data_type {
+        "bool" => (variant_id == 1).to_string(),
+        "f64" => format!("{variant_id}_f64"),
+        _ => {
+            if let Some((tmin, tmax)) = int_type_range(data_type) {
+                // Wide intermediate used only for clamping/formatting. Generated code does NOT use i128.
+                let mut v = variant_id as i128;
+
+                //  If a signed signal uses raw two's-complement IDs in VAL_ (e.g. 1901 for -147 on 11 bits),
+                // interpret positive out-of-range values as raw and convert to signed.
+                if sig.value_type == ValueType::Signed && data_type.starts_with('i') {
+                    let bits = sig.size as u32;
+                    if bits > 0 && bits < 128 {
+                        let sign_threshold = 1i128 << (bits - 1);
+                        if v >= sign_threshold {
+                            v -= 1i128 << bits;
+                        }
+                    }
+                }
+
+                v = v.clamp(tmin, tmax);
+                format!("{v}_{data_type}")
+            } else {
+                format!("{variant_id}_{data_type}")
+            }
+        },
+    }
 }
 
 impl ValCodeGen for ValDescription {
@@ -517,22 +577,20 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         let read_fn = match self.byte_order {
             ByteOrder::LittleEndian => {
                 let (start_bit, end_bit) = self.le_start_end_bit(msg)?;
-
                 format!(
                     "frame.data.view_bits::<Lsb0>()[{start}..{end}].load_le::<{typ}>()",
-                    typ = self.get_data_usize(),
+                    typ = raw_ty,
                     start = start_bit,
                     end = end_bit,
                 )
             },
             ByteOrder::BigEndian => {
                 let (start_bit, end_bit) = self.be_start_end_bit(msg)?;
-
                 format!(
                     "frame.data.view_bits::<Msb0>()[{start}..{end}].load_be::<{typ}>()",
-                    typ = self.get_data_usize(),
+                    typ = raw_ty,
                     start = start_bit,
-                    end = end_bit
+                    end = end_bit,
                 )
             },
         };
@@ -541,29 +599,34 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             code,
             format!(
                 r#"
-    /// {msg_type}::{sig_type} public api (CanDbcSignal trait)
-    impl CanDbcSignal for {sig_type} {{
+/// {msg_type}::{sig_type} public api (CanDbcSignal trait)
+impl CanDbcSignal for {sig_type} {{
 
-        fn get_name(&self) -> &'static str {{
-            self.name
-        }}
+    fn get_name(&self) -> &'static str {{
+        self.name
+    }}
 
-        fn get_stamp(&self) -> u64 {{
-            self.stamp
-        }}
+    fn get_stamp(&self) -> u64 {{
+        self.stamp
+    }}
 
-        fn get_status(&self) -> CanDataStatus{{
-            self.status
-        }}
+    fn get_status(&self) -> CanDataStatus {{
+        self.status
+    }}
 
-        fn as_any(&mut self) -> &mut dyn Any {{
-            self
-        }}
+    fn as_any(&mut self) -> &mut dyn Any {{
+        self
+    }}
 
-        fn update(&mut self, frame: &CanMsgData) -> i32 {{
-            match frame.opcode {{
-                CanBcmOpCode::RxChanged => {{
-                    let raw: {raw_ty} = {read_fn};"#
+    fn update(&mut self, frame: &CanMsgData) -> i32 {{
+        match frame.opcode {{
+            CanBcmOpCode::RxChanged => {{
+                let raw: {raw_ty} = {read_fn};
+"#,
+                msg_type = msg_type,
+                sig_type = sig_type,
+                raw_ty = raw_ty,
+                read_fn = read_fn,
             )
         )?;
 
@@ -573,16 +636,32 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         } else if self.has_scaling() {
             if self.value_type == ValueType::Signed {
                 let isz = self.get_data_isize();
+                let factor = self.factor;
+                let offset = self.offset;
+                let size = self.size;
                 format!(
-                    "(({isz}::from_ne_bytes(raw.to_ne_bytes())) as f64) * {}_f64 + {}_f64",
-                    self.factor, self.offset
+                    "{{
+    // Sign-extend raw from the DBC signal bit-width before scaling.
+    let shift = {raw_ty}::BITS - {size}u32;
+    let signed: {isz} = ((raw << shift) as {isz}) >> shift;
+    (signed as f64) * {factor}_f64 + {offset}_f64
+                }}",
                 )
             } else {
                 format!("(raw as f64) * {}_f64 + {}_f64", self.factor, self.offset)
             }
         } else if self.value_type == ValueType::Signed {
+            // Sign-extend raw from the DBC signal bit-width (works for widths like 11 bits).
             let isz = self.get_data_isize();
-            format!("{isz}::from_ne_bytes(raw.to_ne_bytes())")
+            let raw_ty = raw_ty.clone();
+            let size = self.size;
+            format!(
+                r#"{{
+    let shift = {raw_ty}::BITS - {size}u32;
+    let signed: {isz} = ((raw << shift) as {isz}) >> shift;
+    signed
+}}"#
+            )
         } else {
             "raw".to_string()
         };
@@ -693,12 +772,19 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         let min = self.min;
         let max = self.max;
 
+        //  Clamp to type limits to avoid overflowing literals (e.g. 4294970000_u32).
+        let (min_expr, max_expr) = if typ == "f64" {
+            (format!("{min}_f64"), format!("{max}_f64"))
+        } else {
+            (bound_expr(min, &typ, true), bound_expr(max, &typ, false))
+        };
+
         code_output!(
             code,
             format!(
                 r#"
-        pub const {name_uc}_MIN: {typ} = {min}_{typ};
-        pub const {name_uc}_MAX: {typ} = {max}_{typ};
+        pub const {name_uc}_MIN: {typ} = {min_expr};
+        pub const {name_uc}_MAX: {typ} = {max_expr};
 "#
             )
         )?;
@@ -737,7 +823,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
             for variant in variants {
                 let type_kamel = self.get_type_kamel();
                 let variant_type_kamel = variant.get_type_kamel();
-                let variant_data_type = variant.get_data_value(&self.get_data_type());
+                let variant_data_type = variant_typed_literal(self, variant.id, &data_type);
                 code_output!(
                     code,
                     format!(
@@ -872,7 +958,7 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
                 for variant in variants {
                     count += 1;
 
-                    let data_value = variant.get_data_value(&data_type);
+                    let data_value = variant_typed_literal(self, variant.id, &data_type);
                     let variant_type_kamel = variant.get_type_kamel();
                     code_output!(
                         code,
@@ -964,34 +1050,87 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         fn set_typed_value(&mut self, value:{data_type}, data:&mut [u8]) -> Result<(),CanError> {{"#
             )
         )?;
+
         if self.size == 1 {
-            code_output!(code, r#"            let value = value as u8;"#)?;
-        } else if code.range_check && self.has_scaling() {
-            let min = self.min;
-            let max = self.max;
-            let factor = self.factor;
-            let offset = self.offset;
+            code_output!(code, r#"            let value: u8 = value as u8;"#)?;
+        } else {
+            let bits = self.size;
             code_output!(
                 code,
                 format!(
                     r#"
-            if value < {min}_{data_type} || {max}_{data_type} < value {{
+            //  Mask to the signal bit-length (prevents leaking upper bits).
+            let __mask: u64 = if {bits} == 64 {{ u64::MAX }} else {{ (1u64 << {bits}) - 1 }};"#
+                )
+            )?;
+
+            if code.range_check {
+                let min_expr = bound_expr(min, &data_type, true);
+                let max_expr = bound_expr(max, &data_type, false);
+                code_output!(
+                    code,
+                    format!(
+                        r#"
+            // Range-check clamped to the target type limits (avoids overflowing literals).
+            if value < {min_expr} || {max_expr} < value {{
                 return Err(CanError::new("invalid-signal-value",format!("value={{}} not in [{min}..{max}]",value)));
-            }}
+            }}"#
+                    )
+                )?;
+            }
+
+            if self.has_scaling() {
+                let factor = self.factor;
+                let offset = self.offset;
+                code_output!(
+                    code,
+                    format!(
+                        r#"
             let factor = {factor}_f64;
             let offset = {offset}_f64;
-            let value = ((value - offset) / factor) as {data_usize};"#
-                )
-            )?;
-        }
+            let __raw_f = (value - offset) / factor;"#
+                    )
+                )?;
 
-        if self.value_type == ValueType::Signed {
-            code_output!(
-                code,
-                format!(
-                    r#"            let value = {data_usize}::from_ne_bytes(value.to_ne_bytes());"#
-                )
-            )?;
+                if self.value_type == ValueType::Signed {
+                    code_output!(
+                        code,
+                        format!(
+                            r#"
+            //  Encode signed value as two's complement on {bits} bits.
+            let __raw_i64 = __raw_f as i64;
+            let value: {data_usize} = (((__raw_i64 as u64) & __mask) as {data_usize});"#
+                        )
+                    )?;
+                } else {
+                    code_output!(
+                        code,
+                        format!(
+                            r#"
+            let value: {data_usize} = (((__raw_f as u64) & __mask) as {data_usize});"#
+                        )
+                    )?;
+                }
+            } else {
+                if self.value_type == ValueType::Signed {
+                    code_output!(
+                        code,
+                        format!(
+                            r#"
+            //  Encode signed integer as two's complement on {bits} bits.
+            let value: {data_usize} = ((((value as i64) as u64) & __mask) as {data_usize});"#
+                        )
+                    )?;
+                } else {
+                    code_output!(
+                        code,
+                        format!(
+                            r#"
+            let value: {data_usize} = (((value as u64) & __mask) as {data_usize});"#
+                        )
+                    )?;
+                }
+            }
         }
 
         match self.byte_order {
@@ -1160,6 +1299,7 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
             validate_mux(self, mux_sig)?;
 
             let mux_arg = mux_sig.get_type_snake();
+            let mux_bits = mux_sig.size;
 
             // Compute multiplexor RAW value (DBC selectors are defined on raw values).
             let mux_raw_expr = if mux_sig.size == 1 {
@@ -1168,9 +1308,19 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
             if {mux_arg} {{ 1 }} else {{ 0 }}"#
                 )
             } else if mux_sig.value_type == ValueType::Signed {
-                format!(r#"({mux_arg} as i64) as u64"#)
+                format!(
+                    r#"{{
+            let __mask: u64 = if {mux_bits} == 64 {{ u64::MAX }} else {{ (1u64 << {mux_bits}) - 1 }};
+            ((({mux_arg} as i64) as u64) & __mask)
+    }}"#
+                )
             } else {
-                format!(r#"{mux_arg} as u64"#)
+                format!(
+                    r#"{{
+            let __mask: u64 = if {mux_bits} == 64 {{ u64::MAX }} else {{ (1u64 << {mux_bits}) - 1 }};
+            (({mux_arg} as u64) & __mask)
+    }}"#
+                )
             };
 
             code_output!(
@@ -1326,15 +1476,19 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
             };
 
             if mux_sig.value_type == ValueType::Signed {
+                let data_usize = mux_sig.get_data_usize();
                 let data_isize = mux_sig.get_data_isize();
+                let bits = mux_sig.size;
                 code_output!(
                     code,
                     format!(
                         r#"
             let __mux_raw_value: u64 = {{
             let value = {mux_read_fn};
-            let value = ({data_isize}::from_ne_bytes(value.to_ne_bytes())) as i64;
-            value as u64
+            // Sign-extend mux raw value from its bit-width (mux selectors are raw values).
+            let shift = {data_usize}::BITS - {bits}u32;
+            let signed: {data_isize} = ((value << shift) as {data_isize}) >> shift;
+            (signed as i64) as u64
     }};"#
                     )
                 )?;
@@ -1693,9 +1847,6 @@ impl DbcParser {
         // open and parse dbc input file
         let buffer = fs::read_to_string(infile.as_str())?;
 
-        if uses_extended_multiplexing(&buffer) {
-            return Err(io::Error::other("DBC uses SG_MUL_VAL_ (extended multiplexing) which is not supported by this generator"));
-        }
         let mut dbcfd = match Dbc::try_from(buffer.as_str()) {
             Err(error) => return Err(Error::other(error.to_string())),
             Ok(dbcfd) => dbcfd,
