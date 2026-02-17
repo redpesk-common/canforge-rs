@@ -28,30 +28,14 @@ This matches the current repository:
 ├── .pre-commit-config.yaml
 ├── dbcparser/
 │   ├── Cargo.toml
-│   ├── src/
-│   │   ├── lib.rs          # lib root (re-exports parser/data/gencode)
-│   │   ├── parser.rs       # DBC parser (nom-based)
-│   │   ├── data.rs         # domain types (messages, signals, etc.)
-│   │   └── gencode.rs      # Rust code generation
-│   └── tests/
-│       └── test.rs         # integration tests for parser & lib
+│   └── src/
+│       ├── lib.rs          # lib root (re-exports parser/data/gencode)
+│       └── gencode.rs      # Rust code generation
+
 ├── dbcparser-cli/
 │   ├── Cargo.toml
-│   ├── src/
-│   │   └── main.rs         # CLI: generate Rust from DBC
-│   ├── tests/
-│   │   ├── cli.rs          # CLI behaviour tests
-│   │   ├── test_bms.rs     # BMS example tests
-│   │   └── test_model3.rs  # Model3 example tests
-│   └── examples/
-│       ├── bms/
-│       │   ├── bms.rs
-│       │   ├── bms_blacklist.rs
-│       │   └── dbc/
-│       │       └── BMS.dbc
-│       └── model3/
-│           └── dbc/
-│               └── model3can.dbc
+│   └── src/
+│       └── main.rs         # CLI: generate Rust from DBC
 └── dbcparser-check-cli/
     ├── Cargo.toml
     └── src/
@@ -86,8 +70,6 @@ Helper CLI (`parse-dbc`):
 
 Real-world examples:
 
-- BMS DBC: `dbcparser-cli/examples/bms/dbc/BMS.dbc`
-- Model3 DBC: `dbcparser-cli/examples/model3/dbc/model3can.dbc`
 - Example code and/or generated Rust files live under `dbcparser-cli/examples/`.
 
 ### Design goals / roadmap
@@ -187,36 +169,18 @@ Generate Rust code with defaults:
 
 ```bash
 cargo run -p dbcparser-cli -- \
-  --in dbcparser-cli/examples/bms/dbc/BMS.dbc \
-  --out ./generated_bms.rs
-```
-
-No header:
-
-```bash
-cargo run -p dbcparser-cli -- \
-  --in dbcparser-cli/examples/model3/dbc/model3can.dbc \
-  --out ./generated_model3.rs \
-  --no-header
-```
-
-Custom header file:
-
-```bash
-cargo run -p dbcparser-cli -- \
-  --in dbcparser-cli/examples/bms/dbc/BMS.dbc \
-  --out ./generated_bms.rs \
-  --header-file ./HEADER.txt
+  --in dbcparser-cli/examples/canforge_dbc_complete_norm/dbc/canforge_dbc_complete_norm.dbc \
+  --out ./__canforge_dbc_complete_norm.rs
 ```
 
 Whitelist and blacklist filtering:
 
 ```bash
 cargo run -p dbcparser-cli -- \
-  --in dbcparser-cli/examples/model3/dbc/model3can.dbc \
-  --out ./generated_model3_filtered.rs \
-  --whitelist "0x101,0x201,513" \
-  --blacklist "0x101"
+  --in dbcparser-cli/examples/canforge_dbc_complete_norm/dbc/canforge_dbc_complete_norm.dbcc \
+  --out ../__canforge_dbc_complete_norm.rs \
+  --whitelist "100" \
+  --blacklist "401"
 ```
 
 #### YAML configuration
@@ -231,8 +195,8 @@ Save the effective configuration (after CLI parsing) to a YAML file:
 
 ```bash
 cargo run -p dbcparser-cli -- \
-  --in dbcparser-cli/examples/bms/dbc/BMS.dbc \
-  --out ./generated_bms.rs \
+  --in dbcparser-cli/examples/canforge_dbc_complete_norm/dbc/canforge_dbc_complete_norm.dbc \
+  --out ./generated_canforge_dbc_complete_norm.rs \
   --whitelist "0x101,0x121" \
   --save-config ./effective.yaml
 ```

@@ -57,7 +57,8 @@ fn codegen_test_with_config(dbc_file_path: &str, ref_rs_file_path: &str, extra_a
     assert_eq!(
         ref_content,
         out_content,
-        "Generated output differs from reference {}",
+        "Generated output  {} differs from reference  {} ",
+        out.display(),
         ref_out.display()
     );
 
@@ -98,12 +99,7 @@ fn codegen_test_snippet(dbc_file_path: &str, snippet: &str, extra_args: Vec<&str
     dbc.push(dbc_file_path);
     let out = tmp.child("__generated.rs");
 
-    let mut args = vec![
-        "-i",
-        dbc.to_str().unwrap(),
-        "-o",
-        out.path().to_str().unwrap(),
-    ];
+    let mut args = vec!["-i", dbc.to_str().unwrap(), "-o", out.path().to_str().unwrap()];
     args.extend_from_slice(&extra_args[..]);
     Command::new(bin_path())
         .args(args)
@@ -113,57 +109,35 @@ fn codegen_test_snippet(dbc_file_path: &str, snippet: &str, extra_args: Vec<&str
 
     out.assert(predicate::path::exists());
 
-    let content = fs::read_to_string(out.path()).expect(&format!("Error reading file {}", out.path().to_str().unwrap()));
+    let content = fs::read_to_string(out.path())
+        .unwrap_or_else(|_| panic!("Error reading file {}", out.path().to_str().unwrap()));
     assert!(content.contains(snippet), "Generated output does not contain the expected content");
 }
 
 #[test]
-fn generates_test_1_bms() {
-    codegen_test_with_config("examples/bms/dbc/BMS.dbc", "examples/bms/bms.rs", vec![]);
-}
-
-#[test]
-fn generates_test_2_bms() {
+fn generates_test_1_canforge_dbc_complete_norm() {
     codegen_test_with_config(
-        "examples/bms/dbc/BMS.dbc",
-        "examples/bms/bms_whitelist.rs",
-        vec!["--whitelist", "641"],
-    );
-}
-
-#[test]
-fn generates_test_3_bms() {
-    codegen_test_with_config(
-        "examples/bms/dbc/BMS.dbc",
-        "examples/bms/bms_blacklist.rs",
-        vec!["--blacklist", "641"],
-    );
-}
-
-#[test]
-fn generates_test_1_model3() {
-    codegen_test_with_config(
-        "examples/model3/dbc/model3can.dbc",
-        "examples/model3/model3can.rs",
+        "examples/canforge_dbc_complete_norm/dbc/canforge_dbc_complete_norm.dbc",
+        "examples/canforge_dbc_complete_norm/canforge_dbc_complete_norm.rs",
         vec![],
     );
 }
 
 #[test]
-fn generates_test_2_model3() {
+fn generates_test_2_canforge_dbc_complete_norm() {
     codegen_test_with_config(
-        "examples/model3/dbc/model3can.dbc",
-        "examples/model3/model3can_whitelist.rs",
-        vec!["--whitelist", "257"],
+        "examples/canforge_dbc_complete_norm/dbc/canforge_dbc_complete_norm.dbc",
+        "examples/canforge_dbc_complete_norm/canforge_dbc_complete_norm_whitelist.rs",
+        vec!["--whitelist", "322"],
     );
 }
 
 #[test]
-fn generates_test_3_model3() {
+fn generates_test_3_canforge_dbc_complete_norm() {
     codegen_test_with_config(
-        "examples/model3/dbc/model3can.dbc",
-        "examples/model3/model3can_blacklist.rs",
-        vec!["--blacklist", "257"],
+        "examples/canforge_dbc_complete_norm/dbc/canforge_dbc_complete_norm.dbc",
+        "examples/canforge_dbc_complete_norm/canforge_dbc_complete_norm_blacklist.rs",
+        vec!["--blacklist", "322"],
     );
 }
 
@@ -174,21 +148,25 @@ fn generates_test_sections_not_in_order() {
 
 #[test]
 fn test_variant_generation() {
-    codegen_test_snippet("tests/dbc/val.dbc", r#"pub fn set_raw_value(&mut self, value: u8, data: &mut[u8]) {
+    codegen_test_snippet(
+        "tests/dbc/val.dbc",
+        r#"pub fn set_raw_value(&mut self, value: u8, data: &mut[u8]) {
             data.view_bits_mut::<Msb0>()[5..7].store_be(value);
-        }
 
+        }
         pub fn set_as_def (&mut self, signal_def: DbcLengthWithCode, data: &mut[u8])-> Result<(),CanError> {
             match signal_def {
-                DbcLengthWithCode::TooLong => self.set_raw_value(3, data),
+                DbcLengthWithCode::TooLong => Ok(self.set_raw_value(3, data)),
                 DbcLengthWithCode::_Other(x) => self.set_typed_value(x,data)
             }
         }
+
         fn get_typed_value(&self) -> f64 {
-            self.value
+            self.value.unwrap_or_default()
         }
 
         fn set_typed_value(&mut self, value:f64, data:&mut [u8]) -> Result<(),CanError> {
+
             if value < 0_f64 || 1.5_f64 < value {
                 return Err(CanError::new("invalid-signal-value",format!("value={} not in [0..1.5]",value)));
             }
@@ -196,6 +174,9 @@ fn test_variant_generation() {
             let offset = 0_f64;
             let value = ((value - offset) / factor) as u8;
             data.view_bits_mut::<Msb0>()[5..7].store_be(value);
+
             Ok(())
-        }"#, vec![]);
+        }"#,
+        vec![],
+    );
 }

@@ -1,0 +1,191 @@
+VERSION "canforge-rs - dbc full coverage suite (2026-01-28T07:52:18Z)"
+
+NS_ :
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	ENVVAR_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_: BODY_CTRL POWERTRAIN_CTRL ENERGY_CTRL CHASSIS_CTRL INFOTAINMENT_CTRL DIAG_TOOL SENSOR_GATEWAY LOGGER
+
+CM_ "Reference DBC used by canforge-rs to exercise DBC parsing and codegen edge-cases: signed/unsigned, 8/16/32/64-bit, bool, scaling/offset, little/big endian, and multiplexing.";
+
+VAL_TABLE_ vt_ignition 0 "Off" 1 "Accessory" 2 "On" 3 "Start";
+VAL_TABLE_ vt_gear 0 "P" 1 "R" 2 "N" 3 "D" 4 "B" 5 "S" 6 "Unknown";
+VAL_TABLE_ vt_fault 0 "None" 1 "Info" 2 "Warning" 3 "Derating" 4 "Critical" 5 "Shutdown";
+VAL_TABLE_ vt_mux 0 "STATE" 1 "MEASURE" 2 "INVALID";
+VAL_TABLE_ vt_yesno 0 "NO" 1 "YES";
+
+BO_ 100 Vehicle_Status: 8 BODY_CTRL
+ SG_ ignition_state : 0|2@1+ (1,0) [0|3] ""  INFOTAINMENT_CTRL
+ SG_ gear_position : 2|3@1+ (1,0) [0|7] ""  INFOTAINMENT_CTRL
+ SG_ vehicle_speed_kph : 8|16@1+ (0.01,0) [0|300] "km/h"  CHASSIS_CTRL
+ SG_ steering_angle_deg : 24|16@1- (0.1,0) [-780|780] "deg"  CHASSIS_CTRL
+ SG_ door_fl_open : 40|1@1+ (1,0) [0|1] ""  INFOTAINMENT_CTRL
+ SG_ door_fr_open : 41|1@1+ (1,0) [0|1] ""  INFOTAINMENT_CTRL
+ SG_ door_rl_open : 42|1@1+ (1,0) [0|1] ""  INFOTAINMENT_CTRL
+ SG_ door_rr_open : 43|1@1+ (1,0) [0|1] ""  INFOTAINMENT_CTRL
+ SG_ ambient_temp_degC : 48|8@1- (1,-40) [-40|87] "degC"  SENSOR_GATEWAY
+
+BO_ 101 Energy_Pack_Status: 8 ENERGY_CTRL
+ SG_ pack_voltage_V : 0|16@1+ (0.1,0) [0|1000] "V"  POWERTRAIN_CTRL
+ SG_ pack_current_A : 16|16@1- (0.1,0) [-1000|1000] "A"  POWERTRAIN_CTRL
+ SG_ soc_percent : 32|8@1+ (0.5,0) [0|100] "%"  POWERTRAIN_CTRL
+ SG_ soh_percent : 40|8@1+ (0.5,0) [0|100] "%"  POWERTRAIN_CTRL
+ SG_ isolation_kohm_be : 55|9@0+ (1,0) [0|511] "kOhm"  DIAG_TOOL
+ SG_ fault_level : 48|3@1+ (1,0) [0|5] ""  POWERTRAIN_CTRL
+
+BO_ 200 Powertrain_Mux: 8 POWERTRAIN_CTRL
+ SG_ pt_mux M : 0|4@1+ (1,0) [0|15] ""  LOGGER
+ SG_ alive_counter : 4|4@1+ (1,0) [0|15] ""  LOGGER
+ SG_ checksum : 56|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ engine_rpm m0 : 8|16@1+ (0.25,0) [0|8000] "rpm"  LOGGER
+ SG_ throttle_pos_percent m0 : 24|8@1+ (0.4,0) [0|100] "%"  LOGGER
+ SG_ fuel_rate_Lph m0 : 32|16@1+ (0.01,0) [0|200] "L/h"  LOGGER
+ SG_ motor_torque_Nm m1 : 8|16@1- (0.1,0) [-600|600] "Nm"  LOGGER
+ SG_ motor_speed_rpm m1 : 24|16@1- (1,0) [-20000|20000] "rpm"  LOGGER
+ SG_ inverter_temp_degC m2 : 8|8@1- (1,-40) [-40|215] "degC"  LOGGER
+ SG_ dc_bus_voltage_V m2 : 16|16@1+ (0.1,0) [0|1000] "V"  LOGGER
+ SG_ dc_bus_current_A m2 : 32|16@1- (0.1,0) [-1000|1000] "A"  LOGGER
+ SG_ regen_enabled m3 : 8|1@1+ (1,0) [0|1] ""  LOGGER
+ SG_ torque_limit_active m3 : 9|1@1+ (1,0) [0|1] ""  LOGGER
+ SG_ driver_mode m3 : 10|2@1+ (1,0) [0|3] ""  LOGGER
+
+BO_ 210 Chassis_Control: 8 CHASSIS_CTRL
+ SG_ abs_active : 0|1@1+ (1,0) [0|1] ""  LOGGER
+ SG_ esc_active : 1|1@1+ (1,0) [0|1] ""  LOGGER
+ SG_ brake_pressure_bar : 8|16@1+ (0.1,0) [0|300] "bar"  LOGGER
+ SG_ yaw_rate_dps : 24|16@1- (0.01,0) [-500|500] "deg/s"  LOGGER
+ SG_ lat_accel_mps2 : 40|16@1- (0.01,0) [-30|30] "m/s^2"  LOGGER
+ SG_ wheel_fl_kph : 56|8@1+ (1,0) [0|255] "km/h"  LOGGER
+
+BO_ 300 Diag_FD_Frame: 64 DIAG_TOOL
+ SG_ diag_service_id : 0|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ diag_subfunction : 8|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ diag_status : 16|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_len : 24|8@1+ (1,0) [0|64] ""  LOGGER
+ SG_ payload_byte0 : 32|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte1 : 40|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte2 : 48|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte3 : 56|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte4 : 64|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte5 : 72|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte6 : 80|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte7 : 88|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte8 : 96|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte9 : 104|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte10 : 112|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte11 : 120|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte12 : 128|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte13 : 136|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte14 : 144|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ payload_byte15 : 152|8@1+ (1,0) [0|255] ""  LOGGER
+
+CM_ BO_ 100 "Global vehicle status: ignition, speed, steering, doors, ambient temperature.";
+CM_ SG_ 100 ignition_state "Ignition key/state machine (u8 enum).";
+CM_ SG_ 100 gear_position "Selected gear (u8 enum).";
+CM_ BO_ 101 "Energy pack electrical status (signed/unsigned, scaling/offset, BE field).";
+CM_ BO_ 200 "Multiplexed powertrain frame: different payload depending on pt_mux.";
+CM_ SG_ 200 pt_mux "Multiplexor selector (raw values, no scaling).";
+CM_ BO_ 300 "CAN FD diagnostics transport sample frame (64 bytes).";
+
+VAL_ 100 ignition_state 0 "Off" 1 "Accessory" 2 "On" 3 "Start";
+VAL_ 100 gear_position 0 "P" 1 "R" 2 "N" 3 "D" 4 "B" 5 "S" 6 "Unknown";
+VAL_ 101 fault_level 0 "None" 1 "Info" 2 "Warning" 3 "Derating" 4 "Critical" 5 "Shutdown";
+VAL_ 200 driver_mode 0 "Eco" 1 "Normal" 2 "Sport" 3 "Track";
+
+BO_ 400 DataTypes_LE: 64 SENSOR_GATEWAY
+ SG_ flag_ready_bool : 0|1@1+ (1,0) [0|1] ""  LOGGER
+ SG_ u8_counter : 8|8@1+ (1,0) [0|255] ""  LOGGER
+ SG_ i8_temp_raw : 16|8@1- (1,0) [-128|127] "raw"  LOGGER
+ SG_ u16_odometer_dm : 24|16@1+ (1,0) [0|65535] "dm"  LOGGER
+ SG_ i16_torque_raw : 40|16@1- (1,0) [-32768|32767] "raw"  LOGGER
+ SG_ u32_trip_m : 56|32@1+ (1,0) [0|4294967295] "m"  LOGGER
+ SG_ i32_energy_mWh : 88|32@1- (1,0) [-2147483648|2147483647] "mWh"  LOGGER
+ SG_ u64_timestamp_ms : 120|64@1+ (1,0) [0|18446744073709551615] "ms"  LOGGER
+ SG_ i64_balance_nA : 184|64@1- (1,0) [-9223372036854775808|9223372036854775807] "nA"  LOGGER
+
+BO_ 401 DataTypes_BE: 64 SENSOR_GATEWAY
+ SG_ flag_error_bool : 0|1@0+ (1,0) [0|1] ""  LOGGER
+ SG_ u8_mode_be : 8|8@0+ (1,0) [0|255] ""  LOGGER
+ SG_ i8_delta_be : 16|8@0- (1,0) [-128|127] ""  LOGGER
+ SG_ u16_pressure_kPa_be : 24|16@0+ (0.5,0) [0|32767.5] "kPa"  LOGGER
+ SG_ i16_rate_dps_be : 40|16@0- (0.01,0) [-327.68|327.67] "deg/s"  LOGGER
+ SG_ u32_crc_be : 56|32@0+ (1,0) [0|4294967295] ""  LOGGER
+ SG_ i32_pos_mm_be : 88|32@0- (1,0) [-2147483648|2147483647] "mm"  LOGGER
+ SG_ u64_trip_hash_be : 120|64@0+ (1,0) [0|18446744073709551615] ""  LOGGER
+
+CM_ BO_ 400 "Little-endian type coverage frame (includes 64-bit signed/unsigned).";
+CM_ BO_ 401 "Big-endian type coverage frame (includes scaling and 64-bit unsigned).";
+
+VAL_ 400 flag_ready_bool 0 "NO" 1 "YES";
+VAL_ 401 flag_error_bool 0 "NO" 1 "YES";
+
+BO_ 322 MUX_TEST: 8 POWERTRAIN_CTRL
+ SG_ MUX_signal M : 0|2@1+ (1,0) [0|2] "" INFOTAINMENT_CTRL
+ SG_ open m0 : 3|1@1+ (1,0) [0|1] "" INFOTAINMENT_CTRL
+ SG_ closed m0 : 4|1@1+ (1,0) [0|1] "" INFOTAINMENT_CTRL
+ SG_ direction m0 : 5|2@1+ (1,0) [0|3] "" INFOTAINMENT_CTRL
+ SG_ mode m0 : 61|3@1+ (1,0) [0|7] "" INFOTAINMENT_CTRL
+ SG_ speed m1 : 3|10@1- (0.1,0) [-51.2|51.1] "m/s" INFOTAINMENT_CTRL
+ SG_ temperature m1 : 13|8@1- (1,0) [-128|127] "degC" INFOTAINMENT_CTRL
+
+CM_ BO_ 322 "Minimal multiplexing test message. MUX_signal selects pages. Page 0: open/closed/direction/mode. Page 1: speed/temperature. Collisions between pages are intentional, but signals inside the same page do not overlap (cantools requirement).";
+CM_ SG_ 322 MUX_signal "Multiplexer: 0=STATE, 1=MEASURE, 2=INVALID.";
+CM_ SG_ 322 open "STATE page (MUX_signal=0). Collides with MEASURE speed bits.";
+CM_ SG_ 322 closed "STATE page (MUX_signal=0). Collides with MEASURE speed bits.";
+CM_ SG_ 322 direction "STATE page (MUX_signal=0). Collides with MEASURE speed bits.";
+CM_ SG_ 322 mode "STATE page (MUX_signal=0). Test mode at bits 61..63.";
+CM_ SG_ 322 speed "MEASURE page (MUX_signal=1). Signed 10-bit, factor 0.1 m/s. Overlaps STATE page bits starting at bit 3.";
+CM_ SG_ 322 temperature "MEASURE page (MUX_signal=1). Signed 8-bit degC. Located at bit 13 to avoid overlap with speed.";
+
+VAL_ 322 MUX_signal 0 "STATE" 1 "MEASURE" 2 "INVALID";
+VAL_ 322 open 0 "NO" 1 "YES";
+VAL_ 322 closed 0 "NO" 1 "YES";
+VAL_ 322 direction 0 "STOP" 1 "OPENING" 2 "CLOSING" 3 "UNKNOWN";
+VAL_ 322 mode 0 "M0" 1 "M1" 2 "M2" 3 "M3" 4 "M4" 5 "M5" 6 "M6" 7 "M7";
+
+BA_DEF_ BO_  "GenMsgCycleTime" INT 0 10000;
+BA_DEF_ BO_  "GenMsgSendType" ENUM  "none","cyclic","event";
+BA_DEF_  "BusType" STRING ;
+BA_DEF_DEF_  "GenMsgCycleTime" 100;
+BA_DEF_DEF_  "GenMsgSendType" "cyclic";
+BA_DEF_DEF_  "BusType" "CANFD";
+
+BA_ "GenMsgCycleTime" BO_ 100 10;
+BA_ "GenMsgCycleTime" BO_ 101 100;
+BA_ "GenMsgCycleTime" BO_ 200 20;
+BA_ "GenMsgCycleTime" BO_ 210 10;
+BA_ "GenMsgCycleTime" BO_ 300 0;
+BA_ "GenMsgCycleTime" BO_ 322 50;
+BA_ "GenMsgCycleTime" BO_ 400 500;
+BA_ "GenMsgCycleTime" BO_ 401 500;
+BA_ "GenMsgSendType" BO_ 300 2;
+BA_ "BusType" "CANFD";
