@@ -6,7 +6,7 @@ edition = "2021"
 license = "Apache-2.0"
 
 [dependencies]
-can-dbc = {git="https://github.com/oxibus/can-dbc", branch="main"}
+can-dbc = {git="https://github.com/oxibus/can-dbc", branch="v8.0.0"}
 heck = "0.4"
 libc = "0.2"
 
