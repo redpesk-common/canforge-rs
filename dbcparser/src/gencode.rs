@@ -24,10 +24,10 @@
  *   http://mcu.so/Microcontroller/Automotive/dbc-file-format-documentation_compress.pdf
  */
 
-use heck::{ToSnakeCase, ToUpperCamelCase};
-
 use can_dbc::*;
+use heck::{ToSnakeCase, ToUpperCamelCase};
 use libc;
+use std::collections::HashSet;
 use std::ffi::CString;
 use std::fs::{self, File};
 use std::io::{self, Error, Write};
@@ -393,6 +393,54 @@ fn variant_typed_literal(sig: &Signal, variant_id: i64, data_type: &str) -> Stri
             }
         },
     }
+}
+
+struct EnumVariantDef {
+    rust_name: String,
+    raw_id: i64,
+    typed_value: String,
+}
+
+fn make_unique_variant_name(base: &str, variant_id: i64, used: &mut HashSet<String>) -> String {
+    if used.insert(base.to_string()) {
+        return base.to_string();
+    }
+
+    let mut candidate = format!("{base}__{variant_id}");
+    if used.insert(candidate.clone()) {
+        return candidate;
+    }
+
+    let mut idx = 2;
+    loop {
+        candidate = format!("{base}__{variant_id}_{idx}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        idx += 1;
+    }
+}
+
+fn get_signal_enum_variants(
+    code: &DbcCodeGen,
+    msg: &Message,
+    sig: &Signal,
+) -> Option<Vec<EnumVariantDef>> {
+    let variants = code.dbcfd.value_descriptions_for_signal(msg.id, sig.name.as_str())?;
+
+    let data_type = sig.get_data_type();
+    let mut used = HashSet::new();
+    let mut defs = Vec::new();
+
+    for variant in variants {
+        let base_name = variant.get_type_kamel();
+        let rust_name = make_unique_variant_name(&base_name, variant.id, &mut used);
+        let typed_value = variant_typed_literal(sig, variant.id, &data_type);
+
+        defs.push(EnumVariantDef { rust_name, raw_id: variant.id, typed_value });
+    }
+
+    Some(defs)
 }
 
 impl ValCodeGen for ValDescription {
@@ -792,8 +840,7 @@ impl CanDbcSignal for {sig_type} {{
     }
 
     fn gen_signal_enum(&self, code: &DbcCodeGen, msg: &Message) -> io::Result<()> {
-        if let Some(variants) = code.dbcfd.value_descriptions_for_signal(msg.id, self.name.as_str())
-        {
+        if let Some(variants) = get_signal_enum_variants(code, msg, self) {
             let id = msg.id.raw();
             let name = self.name.as_str();
             let type_kamel = self.get_type_kamel();
@@ -802,8 +849,8 @@ impl CanDbcSignal for {sig_type} {{
                 code_output!(code, r#"    #[derive(Serialize, Deserialize)]"#)?;
             }
             code_output!(code, format!(r#"    pub enum Dbc{type_kamel} {{"#))?;
-            for variant in variants {
-                let variant_name = variant.get_type_kamel();
+            for variant in &variants {
+                let variant_name = &variant.rust_name;
                 code_output!(code, format!(r#"        {variant_name},"#))?;
             }
 
@@ -820,10 +867,10 @@ impl CanDbcSignal for {sig_type} {{
             match val {{"#
                 )
             )?;
-            for variant in variants {
+            for variant in &variants {
                 let type_kamel = self.get_type_kamel();
-                let variant_type_kamel = variant.get_type_kamel();
-                let variant_data_type = variant_typed_literal(self, variant.id, &data_type);
+                let variant_type_kamel = &variant.rust_name;
+                let variant_data_type = &variant.typed_value;
                 code_output!(
                     code,
                     format!(
@@ -939,8 +986,7 @@ impl CanDbcSignal for {sig_type} {{
             )
         )?;
 
-        if let Some(variants) = code.dbcfd.value_descriptions_for_signal(msg.id, self.name.as_str())
-        {
+        if let Some(variants) = get_signal_enum_variants(code, msg, self) {
             code_output!(
                 code,
                 format!(r#"        pub fn get_as_def (&self) -> Dbc{type_kamel} {{"#)
@@ -955,11 +1001,11 @@ impl CanDbcSignal for {sig_type} {{
             } else {
                 let mut count = 0;
                 code_output!(code, r#"            match self.get_typed_value() {"#)?;
-                for variant in variants {
+                for variant in &variants {
                     count += 1;
 
-                    let data_value = variant_typed_literal(self, variant.id, &data_type);
-                    let variant_type_kamel = variant.get_type_kamel();
+                    let data_value = &variant.typed_value;
+                    let variant_type_kamel = &variant.rust_name;
                     code_output!(
                         code,
                         format!(
@@ -1016,9 +1062,9 @@ impl CanDbcSignal for {sig_type} {{
             match signal_def {{"#
                 )
             )?;
-            for variant in variants {
-                let variant_type_kamel = variant.get_type_kamel();
-                let data_value = variant.id;
+            for variant in &variants {
+                let variant_type_kamel = &variant.rust_name;
+                let data_value = variant.raw_id;
                 code_output!(
                     code,
                     format!(
