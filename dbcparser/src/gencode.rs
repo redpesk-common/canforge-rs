@@ -25,6 +25,7 @@
  */
 
 use can_dbc::*;
+use encoding_rs::{UTF_8, WINDOWS_1252};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use libc;
 use std::collections::HashSet;
@@ -1882,6 +1883,18 @@ impl DbcParser {
         list.binary_search(&canid.raw()).is_ok()
     }
 
+    fn read_dbc_file(path: &str) -> io::Result<String> {
+        let bytes = fs::read(path)?;
+
+        let (utf8_text, _, utf8_had_errors) = UTF_8.decode(&bytes);
+        if !utf8_had_errors {
+            return Ok(utf8_text.into_owned());
+        }
+
+        let (cp1252_text, _, _) = WINDOWS_1252.decode(&bytes);
+        Ok(cp1252_text.into_owned())
+    }
+
     /// # Errors
     /// Propagates any I/O error: reading the DBC, parsing, writing output, and time formatting.
     #[allow(clippy::too_many_lines)]
@@ -1891,7 +1904,7 @@ impl DbcParser {
         };
 
         // open and parse dbc input file
-        let buffer = fs::read_to_string(infile.as_str())?;
+        let buffer = Self::read_dbc_file(infile.as_str())?;
 
         let mut dbcfd = match Dbc::try_from(buffer.as_str()) {
             Err(error) => return Err(Error::other(error.to_string())),

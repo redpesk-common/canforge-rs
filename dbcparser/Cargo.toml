@@ -9,6 +9,7 @@ license = "Apache-2.0"
 can-dbc = {git="https://github.com/oxibus/can-dbc", tag="v8.0.0"}
 heck = "0.4"
 libc = "0.2"
+encoding_rs = "0.8"
 
 [features]
 default = []
