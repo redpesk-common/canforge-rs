@@ -28,7 +28,7 @@ use can_dbc::*;
 use encoding_rs::{UTF_8, WINDOWS_1252};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use libc;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::fs::{self, File};
 use std::io::{self, Error, Write};
@@ -194,6 +194,34 @@ fn emit_signal_mut_action(
     };
 
     emit_signal_try_borrow_mut(code, indent, idx, &sig_snake, &dtype_enum, &ok_expr, err_tag)
+}
+
+fn dedup_message_signals(dbcfd: &mut Dbc) {
+    for msg in &mut dbcfd.messages {
+        let msg_name = msg.name.clone();
+        let msg_id = msg.id.raw();
+        let mut seen = HashMap::new();
+
+        msg.signals.retain(|sig| {
+            // Use the generated Rust type as key so exact DBC duplicates
+            // and Rust-name collisions are removed before code generation.
+            let rust_name = sig.get_type_kamel();
+
+            if let Some(first_signal_name) = seen.get(&rust_name) {
+                eprintln!(
+                    "warning: duplicate signal '{}' in DBC message '{}' (CAN id {}). keeping first occurrence '{}' and ignoring this one",
+                    sig.name,
+                    msg_name,
+                    msg_id,
+                    first_signal_name
+                );
+                false
+            } else {
+                seen.insert(rust_name, sig.name.clone());
+                true
+            }
+        });
+    }
 }
 
 fn find_mux_idx(msg: &Message) -> io::Result<Option<usize>> {
@@ -1322,12 +1350,13 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
             .map(|signal| format!("{}: {}", signal.get_type_snake(), signal.get_data_type()))
             .collect();
         let args_str = args.join(", ");
+        let args_prefix = if args_str.is_empty() { String::new() } else { format!("{args_str}, ") };
 
         code_output!(
             code,
             format!(
                 r#"
-        pub fn set_values(&mut self, {args_str}, frame: &mut[u8]) -> Result<&mut Self, CanError> {{
+        pub fn set_values(&mut self, {args_prefix}frame: &mut[u8]) -> Result<&mut Self, CanError> {{
 "#
             )
         )?;
@@ -1910,6 +1939,8 @@ impl DbcParser {
             Err(error) => return Err(Error::other(error.to_string())),
             Ok(dbcfd) => dbcfd,
         };
+
+        dedup_message_signals(&mut dbcfd);
 
         // sort message by canid
         dbcfd.messages.sort_by(|a, b| a.id.raw().cmp(&b.id.raw()));
