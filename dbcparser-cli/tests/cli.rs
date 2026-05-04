@@ -202,7 +202,6 @@ BO_ 101 FooBar: 8 ECU
         .stderr(predicate::str::contains("duplicate generated message identifier 'FooBar'"));
 }
 
-
 #[test]
 fn generates_bit_slice_length_guards() {
     let tmp = assert_fs::TempDir::new().unwrap();
@@ -212,6 +211,7 @@ NS_ :
 BU_: ECU
 BO_ 100 MSG: 2 ECU
  SG_ MySig : 8|8@1+ (1,0) [0|255] "" ECU
+VAL_ 100 MySig 0 "Zero" 1 "One" ;
 "#;
     dbc.write_str(content).unwrap();
 
@@ -225,7 +225,7 @@ BO_ 100 MSG: 2 ECU
     let generated = fs::read_to_string(out.path()).unwrap();
 
     assert!(generated.contains("if frame.data.len() * 8 < 16 {"));
-    assert!(generated.contains("return -1;"));
+    assert!(generated.contains("return 0;"));
     assert!(generated.contains(
         "pub fn set_raw_value(&mut self, value: u8, data: &mut[u8]) -> Result<(),CanError>"
     ));
@@ -258,4 +258,52 @@ BO_ 100 MSG: 2 ECU
     assert!(generated.contains("if frame.data.len() * 8 < 4 {"));
     assert!(generated.contains("\"invalid-frame-length\""));
     assert!(generated.contains("frame too short for mux 'Mux'"));
+}
+
+#[test]
+fn rejects_zero_signal_factor() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 MSG: 8 ECU
+ SG_ MySig : 0|8@1+ (0,0) [0|255] "" ECU
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("signal:MySig has invalid factor 0"));
+}
+
+#[test]
+fn generates_finite_float_value_guard() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 MSG: 8 ECU
+ SG_ MySig : 0|8@1+ (0.5,1) [0|255] "" ECU
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let generated = fs::read_to_string(out.path()).unwrap();
+
+    assert!(generated.contains("if !value.is_finite()"));
+    assert!(generated.contains("value must be finite"));
+    assert!(generated.contains("if !__raw_f.is_finite()"));
+    assert!(generated.contains("raw value must be finite"));
 }

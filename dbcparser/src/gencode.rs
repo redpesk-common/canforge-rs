@@ -255,6 +255,52 @@ fn validate_generated_message_identifiers(dbcfd: &Dbc) -> io::Result<()> {
     Ok(())
 }
 
+fn validate_signal_floating_point_values(dbcfd: &Dbc) -> io::Result<()> {
+    for msg in &dbcfd.messages {
+        for sig in &msg.signals {
+            let msg_name = msg.name.as_str();
+            let sig_name = sig.name.as_str();
+
+            if !sig.factor.is_finite() || sig.factor == 0.0 {
+                return Err(Error::other(format!(
+                    "message:{msg_name} signal:{sig_name} has invalid factor {}; factor must be finite and non-zero",
+                    sig.factor
+                )));
+            }
+
+            if !sig.offset.is_finite() {
+                return Err(Error::other(format!(
+                    "message:{msg_name} signal:{sig_name} has invalid offset {}; offset must be finite",
+                    sig.offset
+                )));
+            }
+
+            if !sig.min.is_finite() {
+                return Err(Error::other(format!(
+                    "message:{msg_name} signal:{sig_name} has invalid minimum {}; minimum must be finite",
+                    sig.min
+                )));
+            }
+
+            if !sig.max.is_finite() {
+                return Err(Error::other(format!(
+                    "message:{msg_name} signal:{sig_name} has invalid maximum {}; maximum must be finite",
+                    sig.max
+                )));
+            }
+
+            if sig.min > sig.max {
+                return Err(Error::other(format!(
+                    "message:{msg_name} signal:{sig_name} has invalid range [{}..{}]; minimum must be lower than or equal to maximum",
+                    sig.min, sig.max
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn find_mux_idx(msg: &Message) -> io::Result<Option<usize>> {
     let idxs: Vec<usize> = msg
         .signals
@@ -737,7 +783,8 @@ impl CanDbcSignal for {sig_type} {{
             CanBcmOpCode::RxChanged => {{
                 if frame.data.len() * 8 < {read_end_bit} {{
                     self.status = CanDataStatus::Error;
-                    return -1;
+                    self.stamp = frame.stamp;
+                    return 0;
                 }}
 
                 let raw: {raw_ty} = {read_fn};
@@ -1179,6 +1226,19 @@ impl CanDbcSignal for {sig_type} {{
         if self.size == 1 {
             code_output!(code, r#"            let value: u8 = value as u8;"#)?;
         } else {
+            if data_type == "f64" {
+                code_output!(
+                    code,
+                    r#"
+            if !value.is_finite() {
+                return Err(CanError::new(
+                    "invalid-signal-value",
+                    format!("signal:{} value must be finite", self.name),
+                ));
+            }"#,
+                )?;
+            }
+
             let bits = self.size;
             code_output!(
                 code,
@@ -1213,7 +1273,13 @@ impl CanDbcSignal for {sig_type} {{
                         r#"
             let factor = {factor}_f64;
             let offset = {offset}_f64;
-            let __raw_f = (value - offset) / factor;"#
+            let __raw_f = (value - offset) / factor;
+            if !__raw_f.is_finite() {{
+                return Err(CanError::new(
+                    "invalid-signal-value",
+                    format!("signal:{{}} raw value must be finite", self.name),
+                ));
+                    }}"#
                     )
                 )?;
 
@@ -2052,6 +2118,7 @@ impl DbcParser {
         dbcfd.messages.sort_by(|a, b| a.id.raw().cmp(&b.id.raw()));
 
         validate_generated_message_identifiers(&dbcfd)?;
+        validate_signal_floating_point_values(&dbcfd)?;
 
         let outfd = match &self.outfile {
             Some(outfile) => {
