@@ -2055,6 +2055,8 @@ use std::rc::{Rc};
                 r#"
 }}
 
+const CAN_IDS: [u32; {msg_count}] = {canids:?};
+
 pub struct CanMsgPool {{
     uid: &'static str,
     pool: [Rc<RefCell<Box<dyn CanDbcMessage>>>;{msg_count}],
@@ -2087,19 +2089,20 @@ impl CanDbcPool for CanMsgPool {{
     }}
 
     fn get_ids(&self) -> &[u32] {{
-        &{canids:?}
+        &CAN_IDS
     }}
 
     fn get_mut(&self, canid: u32) -> Result<RefMut<'_, Box<dyn CanDbcMessage>>, CanError> {{
-        let search= self.pool.binary_search_by(|msg| msg.borrow().get_id().cmp(&canid));
+        let search = CAN_IDS.binary_search(&canid);
         match search {{
-            Ok(idx) => {{
-                match self.pool[idx].try_borrow_mut() {{
-                    Err(_code) => Err(CanError::new("message-get_mut", "internal msg pool error")),
-                    Ok(mut_ref) => Ok(mut_ref),
-                }}
+            Ok(idx) => match self.pool[idx].try_borrow_mut() {{
+                Err(_code) => Err(CanError::new(
+                    "message-get_mut",
+                    format!("canid:{{}} message already mutably borrowed", canid),
+                )),
+                Ok(mut_ref) => Ok(mut_ref),
             }},
-            Err(_) => Err(CanError::new("fail-canid-search", format!("canid:{{}} not found",canid))),
+            Err(_) => Err(CanError::new("fail-canid-search", format!("canid:{{}} not found", canid))),
         }}
     }}
 
