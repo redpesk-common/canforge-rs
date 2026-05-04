@@ -233,10 +233,7 @@ fn validate_generated_message_identifiers(dbcfd: &Dbc) -> io::Result<()> {
         if let Some(first_msg) = canids.insert(canid, msg) {
             return Err(Error::other(format!(
                 "duplicate CAN id {} / 0x{:x} for DBC messages '{}' and '{}'",
-                canid,
-                canid,
-                first_msg.name,
-                msg.name
+                canid, canid, first_msg.name, msg.name
             )));
         }
 
@@ -685,23 +682,29 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         let sig_type = self.get_type_kamel();
         let raw_ty = self.get_data_usize();
 
-        let read_fn = match self.byte_order {
+        let (read_fn, read_end_bit) = match self.byte_order {
             ByteOrder::LittleEndian => {
                 let (start_bit, end_bit) = self.le_start_end_bit(msg)?;
-                format!(
-                    "frame.data.view_bits::<Lsb0>()[{start}..{end}].load_le::<{typ}>()",
-                    typ = raw_ty,
-                    start = start_bit,
-                    end = end_bit,
+                (
+                    format!(
+                        "frame.data.view_bits::<Lsb0>()[{start}..{end}].load_le::<{typ}>()",
+                        typ = raw_ty,
+                        start = start_bit,
+                        end = end_bit,
+                    ),
+                    end_bit,
                 )
             },
             ByteOrder::BigEndian => {
                 let (start_bit, end_bit) = self.be_start_end_bit(msg)?;
-                format!(
-                    "frame.data.view_bits::<Msb0>()[{start}..{end}].load_be::<{typ}>()",
-                    typ = raw_ty,
-                    start = start_bit,
-                    end = end_bit,
+                (
+                    format!(
+                        "frame.data.view_bits::<Msb0>()[{start}..{end}].load_be::<{typ}>()",
+                        typ = raw_ty,
+                        start = start_bit,
+                        end = end_bit,
+                    ),
+                    end_bit,
                 )
             },
         };
@@ -732,12 +735,18 @@ impl CanDbcSignal for {sig_type} {{
     fn update(&mut self, frame: &CanMsgData) -> i32 {{
         match frame.opcode {{
             CanBcmOpCode::RxChanged => {{
+                if frame.data.len() * 8 < {read_end_bit} {{
+                    self.status = CanDataStatus::Error;
+                    return -1;
+                }}
+
                 let raw: {raw_ty} = {read_fn};
 "#,
                 msg_type = msg_type,
                 sig_type = sig_type,
                 raw_ty = raw_ty,
                 read_fn = read_fn,
+                read_end_bit = read_end_bit,
             )
         )?;
 
@@ -1088,41 +1097,48 @@ impl CanDbcSignal for {sig_type} {{
                 }
                 code_output!(code, r#"            }"#)?;
             }
-            code_output!(
-                code,
-                format!(
-                    r#"
-        }}
-        pub fn set_raw_value(&mut self, value: {data_usize}, data: &mut[u8]) {{"#
-                )
-            )?;
-            match self.byte_order {
+
+            let (raw_store_fn, raw_store_end_bit) = match self.byte_order {
                 ByteOrder::LittleEndian => {
                     let (start_bit, end_bit) = self.le_start_end_bit(msg)?;
-                    code_output!(
-                        code,
+                    (
                         format!(
                             r#"            data.view_bits_mut::<Lsb0>()[{start_bit}..{end_bit}].store_le(value);"#
-                        )
-                    )?;
+                        ),
+                        end_bit,
+                    )
                 },
                 ByteOrder::BigEndian => {
                     let (start_bit, end_bit) = self.be_start_end_bit(msg)?;
-                    code_output!(
-                        code,
+                    (
                         format!(
                             r#"            data.view_bits_mut::<Msb0>()[{start_bit}..{end_bit}].store_be(value);"#
-                        )
-                    )?;
+                        ),
+                        end_bit,
+                    )
                 },
-            }
+            };
+
             code_output!(
                 code,
                 format!(
                     r#"
         }}
+        pub fn set_raw_value(&mut self, value: {data_usize}, data: &mut[u8]) -> Result<(),CanError> {{
+            if data.len() * 8 < {raw_store_end_bit} {{
+                return Err(CanError::new(
+                    "invalid-buffer-length",
+                    format!("signal:{{}} requires {{}} bits but buffer has {{}} bits", self.name, {raw_store_end_bit}, data.len() * 8),
+                ));
+            }}
+
+            {raw_store_fn}
+            Ok(())
+        }}
         pub fn set_as_def (&mut self, signal_def: Dbc{type_kamel}, data: &mut[u8])-> Result<(),CanError> {{
-            match signal_def {{"#
+            match signal_def {{"#,
+                    raw_store_fn = raw_store_fn,
+                    raw_store_end_bit = raw_store_end_bit,
                 )
             )?;
             for variant in &variants {
@@ -1131,7 +1147,7 @@ impl CanDbcSignal for {sig_type} {{
                 code_output!(
                     code,
                     format!(
-                        r#"                Dbc{type_kamel}::{variant_type_kamel} => Ok(self.set_raw_value({data_value}, data)),"#
+                        r#"                Dbc{type_kamel}::{variant_type_kamel} => self.set_raw_value({data_value}, data),"#
                     )
                 )?;
             }
@@ -1242,26 +1258,43 @@ impl CanDbcSignal for {sig_type} {{
             }
         }
 
-        match self.byte_order {
+        let (typed_store_fn, typed_store_end_bit) = match self.byte_order {
             ByteOrder::LittleEndian => {
                 let (start_bit, end_bit) = self.le_start_end_bit(msg)?;
-                code_output!(
-                    code,
+                (
                     format!(
                         r#"            data.view_bits_mut::<Lsb0>()[{start_bit}..{end_bit}].store_le(value);"#
-                    )
-                )?;
+                    ),
+                    end_bit,
+                )
             },
             ByteOrder::BigEndian => {
                 let (start_bit, end_bit) = self.be_start_end_bit(msg)?;
-                code_output!(
-                    code,
+                (
                     format!(
                         r#"            data.view_bits_mut::<Msb0>()[{start_bit}..{end_bit}].store_be(value);"#
-                    )
-                )?;
+                    ),
+                    end_bit,
+                )
             },
-        }
+        };
+
+        code_output!(
+            code,
+            format!(
+                r#"
+            if data.len() * 8 < {typed_store_end_bit} {{
+                return Err(CanError::new(
+                    "invalid-buffer-length",
+                    format!("signal:{{}} requires {{}} bits but buffer has {{}} bits", self.name, {typed_store_end_bit}, data.len() * 8),
+                ));
+            }}
+
+            {typed_store_fn}"#,
+                typed_store_fn = typed_store_fn,
+                typed_store_end_bit = typed_store_end_bit,
+            )
+        )?;
 
         let msg_type = msg.get_type_kamel();
         let sig_type = self.get_type_kamel();
@@ -1564,26 +1597,47 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
             validate_mux(self, mux_sig)?;
 
             // Read multiplexor RAW value from frame bits.
-            let mux_read_fn = match mux_sig.byte_order {
+            let (mux_read_fn, mux_read_end_bit) = match mux_sig.byte_order {
                 ByteOrder::LittleEndian => {
                     let (start_bit, end_bit) = mux_sig.le_start_end_bit(self)?;
-                    format!(
-                        "frame.data.view_bits::<Lsb0>()[{start}..{end}].load_le::<{typ}>()",
-                        typ = mux_sig.get_data_usize(),
-                        start = start_bit,
-                        end = end_bit,
+                    (
+                        format!(
+                            "frame.data.view_bits::<Lsb0>()[{start}..{end}].load_le::<{typ}>()",
+                            typ = mux_sig.get_data_usize(),
+                            start = start_bit,
+                            end = end_bit,
+                        ),
+                        end_bit,
                     )
                 },
                 ByteOrder::BigEndian => {
                     let (start_bit, end_bit) = mux_sig.be_start_end_bit(self)?;
-                    format!(
-                        "frame.data.view_bits::<Msb0>()[{start}..{end}].load_be::<{typ}>()",
-                        typ = mux_sig.get_data_usize(),
-                        start = start_bit,
-                        end = end_bit,
+                    (
+                        format!(
+                            "frame.data.view_bits::<Msb0>()[{start}..{end}].load_be::<{typ}>()",
+                            typ = mux_sig.get_data_usize(),
+                            start = start_bit,
+                            end = end_bit,
+                        ),
+                        end_bit,
                     )
                 },
             };
+
+            code_output!(
+                code,
+                format!(
+                    r#"
+            if frame.data.len() * 8 < {mux_read_end_bit} {{
+                return Err(CanError::new(
+                    "invalid-frame-length",
+                    format!("canid:{{}} frame too short for mux '{mux_name}': requires {{}} bits but frame has {{}} bits", self.id, {mux_read_end_bit}, frame.data.len() * 8),
+                ));
+            }}"#,
+                    mux_name = mux_sig.name,
+                    mux_read_end_bit = mux_read_end_bit,
+                )
+            )?;
 
             if mux_sig.value_type == ValueType::Signed {
                 let data_usize = mux_sig.get_data_usize();
