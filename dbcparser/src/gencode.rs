@@ -870,7 +870,11 @@ impl CanDbcSignal for {sig_type} {{
                 None => 0,
                 Some(callback) => {{
                     match callback.try_borrow() {{
-                        Err(_) => {{println!("fail to get signal callback reference"); -1}},
+                        Err(_) => {{
+                            self.status = CanDataStatus::Error;
+                            self.stamp = frame.stamp;
+                            0
+                        }},
                         Ok(cb_ref) => cb_ref.sig_notification(self),
                     }}
                 }}
@@ -1818,7 +1822,10 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
                 None => {{}},
                 Some(callback) => {{
                     match callback.try_borrow() {{
-                        Err(_) => println!("fail to get message callback reference"),
+                        Err(_) => return Err(CanError::new(
+                            "message-callback-borrow",
+                            format!("canid:{{}} message callback already borrowed", self.id),
+                        )),
                         Ok(cb_ref) => cb_ref.msg_notification(self),
                     }}
                 }}

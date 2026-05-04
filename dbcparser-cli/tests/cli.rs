@@ -307,3 +307,34 @@ BO_ 100 MSG: 8 ECU
     assert!(generated.contains("if !__raw_f.is_finite()"));
     assert!(generated.contains("raw value must be finite"));
 }
+
+#[test]
+fn generated_code_handles_callback_borrow_failures_without_println() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 MSG: 1 ECU
+ SG_ MySig : 0|8@1+ (1,0) [0|255] "" ECU
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let generated = fs::read_to_string(out.path()).unwrap();
+
+    assert!(!generated.contains("fail to get signal callback reference"));
+    assert!(!generated.contains("fail to get message callback reference"));
+    assert!(!generated.contains("println!("));
+
+    assert!(generated.contains("self.status = CanDataStatus::Error;"));
+    assert!(generated.contains("self.stamp = frame.stamp;"));
+    assert!(generated.contains("\"message-callback-borrow\""));
+    assert!(generated.contains("message callback already borrowed"));
+}
