@@ -1,6 +1,7 @@
 use assert_cmd::prelude::*;
 use assert_fs::prelude::*;
 use predicates::prelude::*;
+use std::fs;
 use std::process::Command;
 
 // DBC minimal viable pour ton parser+generator.
@@ -199,4 +200,62 @@ BO_ 101 FooBar: 8 ECU
         .assert()
         .failure()
         .stderr(predicate::str::contains("duplicate generated message identifier 'FooBar'"));
+}
+
+
+#[test]
+fn generates_bit_slice_length_guards() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 MSG: 2 ECU
+ SG_ MySig : 8|8@1+ (1,0) [0|255] "" ECU
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let generated = fs::read_to_string(out.path()).unwrap();
+
+    assert!(generated.contains("if frame.data.len() * 8 < 16 {"));
+    assert!(generated.contains("return -1;"));
+    assert!(generated.contains(
+        "pub fn set_raw_value(&mut self, value: u8, data: &mut[u8]) -> Result<(),CanError>"
+    ));
+    assert!(generated.contains("if data.len() * 8 < 16 {"));
+    assert!(generated.contains("\"invalid-buffer-length\""));
+}
+
+#[test]
+fn generates_mux_length_guard() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 MSG: 2 ECU
+ SG_ Mux M : 0|4@1+ (1,0) [0|15] "" ECU
+ SG_ Payload m1 : 8|8@1+ (1,0) [0|255] "" ECU
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let generated = fs::read_to_string(out.path()).unwrap();
+
+    assert!(generated.contains("if frame.data.len() * 8 < 4 {"));
+    assert!(generated.contains("\"invalid-frame-length\""));
+    assert!(generated.contains("frame too short for mux 'Mux'"));
 }
