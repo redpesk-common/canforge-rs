@@ -158,3 +158,45 @@ fn rejects_bad_whitelist_value() {
         .failure()
         .stderr(predicate::str::contains("invalid hex id"));
 }
+
+#[test]
+fn rejects_duplicate_can_ids() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 MSG_A: 8 ECU
+BO_ 100 MSG_B: 8 ECU
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate CAN id 100 / 0x64"));
+}
+
+#[test]
+fn rejects_duplicate_generated_message_identifiers() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 FOO_BAR: 8 ECU
+BO_ 101 FooBar: 8 ECU
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate generated message identifier 'FooBar'"));
+}

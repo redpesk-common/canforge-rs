@@ -224,6 +224,40 @@ fn dedup_message_signals(dbcfd: &mut Dbc) {
     }
 }
 
+fn validate_generated_message_identifiers(dbcfd: &Dbc) -> io::Result<()> {
+    let mut canids = HashMap::<u32, &Message>::new();
+    let mut rust_names = HashMap::<String, &Message>::new();
+
+    for msg in &dbcfd.messages {
+        let canid = msg.id.raw();
+        if let Some(first_msg) = canids.insert(canid, msg) {
+            return Err(Error::other(format!(
+                "duplicate CAN id {} / 0x{:x} for DBC messages '{}' and '{}'",
+                canid,
+                canid,
+                first_msg.name,
+                msg.name
+            )));
+        }
+
+        let rust_name = msg.get_type_kamel();
+        if let Some(first_msg) = rust_names.insert(rust_name.clone(), msg) {
+            return Err(Error::other(format!(
+                "duplicate generated message identifier '{}' for DBC messages '{}' (CAN id {} / 0x{:x}) and '{}' (CAN id {} / 0x{:x})",
+                rust_name,
+                first_msg.name,
+                first_msg.id.raw(),
+                first_msg.id.raw(),
+                msg.name,
+                canid,
+                canid
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 fn find_mux_idx(msg: &Message) -> io::Result<Option<usize>> {
     let idxs: Vec<usize> = msg
         .signals
@@ -1962,6 +1996,8 @@ impl DbcParser {
 
         // sort message by canid
         dbcfd.messages.sort_by(|a, b| a.id.raw().cmp(&b.id.raw()));
+
+        validate_generated_message_identifiers(&dbcfd)?;
 
         let outfd = match &self.outfile {
             Some(outfile) => {
