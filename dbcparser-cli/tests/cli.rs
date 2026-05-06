@@ -1,6 +1,7 @@
 use assert_cmd::prelude::*;
 use assert_fs::prelude::*;
 use predicates::prelude::*;
+use std::fs;
 use std::process::Command;
 
 // DBC minimal viable pour ton parser+generator.
@@ -157,4 +158,183 @@ fn rejects_bad_whitelist_value() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("invalid hex id"));
+}
+
+#[test]
+fn rejects_duplicate_can_ids() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 MSG_A: 8 ECU
+BO_ 100 MSG_B: 8 ECU
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate CAN id 100 / 0x64"));
+}
+
+#[test]
+fn rejects_duplicate_generated_message_identifiers() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 FOO_BAR: 8 ECU
+BO_ 101 FooBar: 8 ECU
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate generated message identifier 'FooBar'"));
+}
+
+#[test]
+fn generates_bit_slice_length_guards() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 MSG: 2 ECU
+ SG_ MySig : 8|8@1+ (1,0) [0|255] "" ECU
+VAL_ 100 MySig 0 "Zero" 1 "One" ;
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let generated = fs::read_to_string(out.path()).unwrap();
+
+    assert!(generated.contains("if frame.data.len() * 8 < 16 {"));
+    assert!(generated.contains("return 0;"));
+    assert!(generated.contains(
+        "pub fn set_raw_value(&mut self, value: u8, data: &mut[u8]) -> Result<(),CanError>"
+    ));
+    assert!(generated.contains("if data.len() * 8 < 16 {"));
+    assert!(generated.contains("\"invalid-buffer-length\""));
+}
+
+#[test]
+fn generates_mux_length_guard() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 MSG: 2 ECU
+ SG_ Mux M : 0|4@1+ (1,0) [0|15] "" ECU
+ SG_ Payload m1 : 8|8@1+ (1,0) [0|255] "" ECU
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let generated = fs::read_to_string(out.path()).unwrap();
+
+    assert!(generated.contains("if frame.data.len() * 8 < 4 {"));
+    assert!(generated.contains("\"invalid-frame-length\""));
+    assert!(generated.contains("frame too short for mux 'Mux'"));
+}
+
+#[test]
+fn rejects_zero_signal_factor() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 MSG: 8 ECU
+ SG_ MySig : 0|8@1+ (0,0) [0|255] "" ECU
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("signal:MySig has invalid factor 0"));
+}
+
+#[test]
+fn generates_finite_float_value_guard() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 MSG: 8 ECU
+ SG_ MySig : 0|8@1+ (0.5,1) [0|255] "" ECU
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let generated = fs::read_to_string(out.path()).unwrap();
+
+    assert!(generated.contains("if !value.is_finite()"));
+    assert!(generated.contains("value must be finite"));
+    assert!(generated.contains("if !__raw_f.is_finite()"));
+    assert!(generated.contains("raw value must be finite"));
+}
+
+#[test]
+fn generated_code_handles_callback_borrow_failures_without_println() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let dbc = tmp.child("in.dbc");
+    let content = r#"VERSION "1.0"
+NS_ :
+BU_: ECU
+BO_ 100 MSG: 1 ECU
+ SG_ MySig : 0|8@1+ (1,0) [0|255] "" ECU
+"#;
+    dbc.write_str(content).unwrap();
+
+    let out = tmp.child("gen.rs");
+
+    Command::new(bin_path())
+        .args(["-i", dbc.path().to_str().unwrap(), "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let generated = fs::read_to_string(out.path()).unwrap();
+
+    assert!(!generated.contains("fail to get signal callback reference"));
+    assert!(!generated.contains("fail to get message callback reference"));
+    assert!(!generated.contains("println!("));
+
+    assert!(generated.contains("self.status = CanDataStatus::Error;"));
+    assert!(generated.contains("self.stamp = frame.stamp;"));
+    assert!(generated.contains("\"message-callback-borrow\""));
+    assert!(generated.contains("message callback already borrowed"));
 }

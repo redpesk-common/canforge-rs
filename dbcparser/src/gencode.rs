@@ -224,6 +224,83 @@ fn dedup_message_signals(dbcfd: &mut Dbc) {
     }
 }
 
+fn validate_generated_message_identifiers(dbcfd: &Dbc) -> io::Result<()> {
+    let mut canids = HashMap::<u32, &Message>::new();
+    let mut rust_names = HashMap::<String, &Message>::new();
+
+    for msg in &dbcfd.messages {
+        let canid = msg.id.raw();
+        if let Some(first_msg) = canids.insert(canid, msg) {
+            return Err(Error::other(format!(
+                "duplicate CAN id {} / 0x{:x} for DBC messages '{}' and '{}'",
+                canid, canid, first_msg.name, msg.name
+            )));
+        }
+
+        let rust_name = msg.get_type_kamel();
+        if let Some(first_msg) = rust_names.insert(rust_name.clone(), msg) {
+            return Err(Error::other(format!(
+                "duplicate generated message identifier '{}' for DBC messages '{}' (CAN id {} / 0x{:x}) and '{}' (CAN id {} / 0x{:x})",
+                rust_name,
+                first_msg.name,
+                first_msg.id.raw(),
+                first_msg.id.raw(),
+                msg.name,
+                canid,
+                canid
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_signal_floating_point_values(dbcfd: &Dbc) -> io::Result<()> {
+    for msg in &dbcfd.messages {
+        for sig in &msg.signals {
+            let msg_name = msg.name.as_str();
+            let sig_name = sig.name.as_str();
+
+            if !sig.factor.is_finite() || sig.factor == 0.0 {
+                return Err(Error::other(format!(
+                    "message:{msg_name} signal:{sig_name} has invalid factor {}; factor must be finite and non-zero",
+                    sig.factor
+                )));
+            }
+
+            if !sig.offset.is_finite() {
+                return Err(Error::other(format!(
+                    "message:{msg_name} signal:{sig_name} has invalid offset {}; offset must be finite",
+                    sig.offset
+                )));
+            }
+
+            if !sig.min.is_finite() {
+                return Err(Error::other(format!(
+                    "message:{msg_name} signal:{sig_name} has invalid minimum {}; minimum must be finite",
+                    sig.min
+                )));
+            }
+
+            if !sig.max.is_finite() {
+                return Err(Error::other(format!(
+                    "message:{msg_name} signal:{sig_name} has invalid maximum {}; maximum must be finite",
+                    sig.max
+                )));
+            }
+
+            if sig.min > sig.max {
+                return Err(Error::other(format!(
+                    "message:{msg_name} signal:{sig_name} has invalid range [{}..{}]; minimum must be lower than or equal to maximum",
+                    sig.min, sig.max
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn find_mux_idx(msg: &Message) -> io::Result<Option<usize>> {
     let idxs: Vec<usize> = msg
         .signals
@@ -651,23 +728,29 @@ impl SigCodeGen<&DbcCodeGen> for Signal {
         let sig_type = self.get_type_kamel();
         let raw_ty = self.get_data_usize();
 
-        let read_fn = match self.byte_order {
+        let (read_fn, read_end_bit) = match self.byte_order {
             ByteOrder::LittleEndian => {
                 let (start_bit, end_bit) = self.le_start_end_bit(msg)?;
-                format!(
-                    "frame.data.view_bits::<Lsb0>()[{start}..{end}].load_le::<{typ}>()",
-                    typ = raw_ty,
-                    start = start_bit,
-                    end = end_bit,
+                (
+                    format!(
+                        "frame.data.view_bits::<Lsb0>()[{start}..{end}].load_le::<{typ}>()",
+                        typ = raw_ty,
+                        start = start_bit,
+                        end = end_bit,
+                    ),
+                    end_bit,
                 )
             },
             ByteOrder::BigEndian => {
                 let (start_bit, end_bit) = self.be_start_end_bit(msg)?;
-                format!(
-                    "frame.data.view_bits::<Msb0>()[{start}..{end}].load_be::<{typ}>()",
-                    typ = raw_ty,
-                    start = start_bit,
-                    end = end_bit,
+                (
+                    format!(
+                        "frame.data.view_bits::<Msb0>()[{start}..{end}].load_be::<{typ}>()",
+                        typ = raw_ty,
+                        start = start_bit,
+                        end = end_bit,
+                    ),
+                    end_bit,
                 )
             },
         };
@@ -698,12 +781,19 @@ impl CanDbcSignal for {sig_type} {{
     fn update(&mut self, frame: &CanMsgData) -> i32 {{
         match frame.opcode {{
             CanBcmOpCode::RxChanged => {{
+                if frame.data.len() * 8 < {read_end_bit} {{
+                    self.status = CanDataStatus::Error;
+                    self.stamp = frame.stamp;
+                    return 0;
+                }}
+
                 let raw: {raw_ty} = {read_fn};
 "#,
                 msg_type = msg_type,
                 sig_type = sig_type,
                 raw_ty = raw_ty,
                 read_fn = read_fn,
+                read_end_bit = read_end_bit,
             )
         )?;
 
@@ -780,7 +870,11 @@ impl CanDbcSignal for {sig_type} {{
                 None => 0,
                 Some(callback) => {{
                     match callback.try_borrow() {{
-                        Err(_) => {{println!("fail to get signal callback reference"); -1}},
+                        Err(_) => {{
+                            self.status = CanDataStatus::Error;
+                            self.stamp = frame.stamp;
+                            0
+                        }},
                         Ok(cb_ref) => cb_ref.sig_notification(self),
                     }}
                 }}
@@ -1054,41 +1148,48 @@ impl CanDbcSignal for {sig_type} {{
                 }
                 code_output!(code, r#"            }"#)?;
             }
-            code_output!(
-                code,
-                format!(
-                    r#"
-        }}
-        pub fn set_raw_value(&mut self, value: {data_usize}, data: &mut[u8]) {{"#
-                )
-            )?;
-            match self.byte_order {
+
+            let (raw_store_fn, raw_store_end_bit) = match self.byte_order {
                 ByteOrder::LittleEndian => {
                     let (start_bit, end_bit) = self.le_start_end_bit(msg)?;
-                    code_output!(
-                        code,
+                    (
                         format!(
                             r#"            data.view_bits_mut::<Lsb0>()[{start_bit}..{end_bit}].store_le(value);"#
-                        )
-                    )?;
+                        ),
+                        end_bit,
+                    )
                 },
                 ByteOrder::BigEndian => {
                     let (start_bit, end_bit) = self.be_start_end_bit(msg)?;
-                    code_output!(
-                        code,
+                    (
                         format!(
                             r#"            data.view_bits_mut::<Msb0>()[{start_bit}..{end_bit}].store_be(value);"#
-                        )
-                    )?;
+                        ),
+                        end_bit,
+                    )
                 },
-            }
+            };
+
             code_output!(
                 code,
                 format!(
                     r#"
         }}
+        pub fn set_raw_value(&mut self, value: {data_usize}, data: &mut[u8]) -> Result<(),CanError> {{
+            if data.len() * 8 < {raw_store_end_bit} {{
+                return Err(CanError::new(
+                    "invalid-buffer-length",
+                    format!("signal:{{}} requires {{}} bits but buffer has {{}} bits", self.name, {raw_store_end_bit}, data.len() * 8),
+                ));
+            }}
+
+            {raw_store_fn}
+            Ok(())
+        }}
         pub fn set_as_def (&mut self, signal_def: Dbc{type_kamel}, data: &mut[u8])-> Result<(),CanError> {{
-            match signal_def {{"#
+            match signal_def {{"#,
+                    raw_store_fn = raw_store_fn,
+                    raw_store_end_bit = raw_store_end_bit,
                 )
             )?;
             for variant in &variants {
@@ -1097,7 +1198,7 @@ impl CanDbcSignal for {sig_type} {{
                 code_output!(
                     code,
                     format!(
-                        r#"                Dbc{type_kamel}::{variant_type_kamel} => Ok(self.set_raw_value({data_value}, data)),"#
+                        r#"                Dbc{type_kamel}::{variant_type_kamel} => self.set_raw_value({data_value}, data),"#
                     )
                 )?;
             }
@@ -1129,6 +1230,19 @@ impl CanDbcSignal for {sig_type} {{
         if self.size == 1 {
             code_output!(code, r#"            let value: u8 = value as u8;"#)?;
         } else {
+            if data_type == "f64" {
+                code_output!(
+                    code,
+                    r#"
+            if !value.is_finite() {
+                return Err(CanError::new(
+                    "invalid-signal-value",
+                    format!("signal:{} value must be finite", self.name),
+                ));
+            }"#,
+                )?;
+            }
+
             let bits = self.size;
             code_output!(
                 code,
@@ -1163,7 +1277,13 @@ impl CanDbcSignal for {sig_type} {{
                         r#"
             let factor = {factor}_f64;
             let offset = {offset}_f64;
-            let __raw_f = (value - offset) / factor;"#
+            let __raw_f = (value - offset) / factor;
+            if !__raw_f.is_finite() {{
+                return Err(CanError::new(
+                    "invalid-signal-value",
+                    format!("signal:{{}} raw value must be finite", self.name),
+                ));
+                    }}"#
                     )
                 )?;
 
@@ -1208,26 +1328,43 @@ impl CanDbcSignal for {sig_type} {{
             }
         }
 
-        match self.byte_order {
+        let (typed_store_fn, typed_store_end_bit) = match self.byte_order {
             ByteOrder::LittleEndian => {
                 let (start_bit, end_bit) = self.le_start_end_bit(msg)?;
-                code_output!(
-                    code,
+                (
                     format!(
                         r#"            data.view_bits_mut::<Lsb0>()[{start_bit}..{end_bit}].store_le(value);"#
-                    )
-                )?;
+                    ),
+                    end_bit,
+                )
             },
             ByteOrder::BigEndian => {
                 let (start_bit, end_bit) = self.be_start_end_bit(msg)?;
-                code_output!(
-                    code,
+                (
                     format!(
                         r#"            data.view_bits_mut::<Msb0>()[{start_bit}..{end_bit}].store_be(value);"#
-                    )
-                )?;
+                    ),
+                    end_bit,
+                )
             },
-        }
+        };
+
+        code_output!(
+            code,
+            format!(
+                r#"
+            if data.len() * 8 < {typed_store_end_bit} {{
+                return Err(CanError::new(
+                    "invalid-buffer-length",
+                    format!("signal:{{}} requires {{}} bits but buffer has {{}} bits", self.name, {typed_store_end_bit}, data.len() * 8),
+                ));
+            }}
+
+            {typed_store_fn}"#,
+                typed_store_fn = typed_store_fn,
+                typed_store_end_bit = typed_store_end_bit,
+            )
+        )?;
 
         let msg_type = msg.get_type_kamel();
         let sig_type = self.get_type_kamel();
@@ -1530,26 +1667,47 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
             validate_mux(self, mux_sig)?;
 
             // Read multiplexor RAW value from frame bits.
-            let mux_read_fn = match mux_sig.byte_order {
+            let (mux_read_fn, mux_read_end_bit) = match mux_sig.byte_order {
                 ByteOrder::LittleEndian => {
                     let (start_bit, end_bit) = mux_sig.le_start_end_bit(self)?;
-                    format!(
-                        "frame.data.view_bits::<Lsb0>()[{start}..{end}].load_le::<{typ}>()",
-                        typ = mux_sig.get_data_usize(),
-                        start = start_bit,
-                        end = end_bit,
+                    (
+                        format!(
+                            "frame.data.view_bits::<Lsb0>()[{start}..{end}].load_le::<{typ}>()",
+                            typ = mux_sig.get_data_usize(),
+                            start = start_bit,
+                            end = end_bit,
+                        ),
+                        end_bit,
                     )
                 },
                 ByteOrder::BigEndian => {
                     let (start_bit, end_bit) = mux_sig.be_start_end_bit(self)?;
-                    format!(
-                        "frame.data.view_bits::<Msb0>()[{start}..{end}].load_be::<{typ}>()",
-                        typ = mux_sig.get_data_usize(),
-                        start = start_bit,
-                        end = end_bit,
+                    (
+                        format!(
+                            "frame.data.view_bits::<Msb0>()[{start}..{end}].load_be::<{typ}>()",
+                            typ = mux_sig.get_data_usize(),
+                            start = start_bit,
+                            end = end_bit,
+                        ),
+                        end_bit,
                     )
                 },
             };
+
+            code_output!(
+                code,
+                format!(
+                    r#"
+            if frame.data.len() * 8 < {mux_read_end_bit} {{
+                return Err(CanError::new(
+                    "invalid-frame-length",
+                    format!("canid:{{}} frame too short for mux '{mux_name}': requires {{}} bits but frame has {{}} bits", self.id, {mux_read_end_bit}, frame.data.len() * 8),
+                ));
+            }}"#,
+                    mux_name = mux_sig.name,
+                    mux_read_end_bit = mux_read_end_bit,
+                )
+            )?;
 
             if mux_sig.value_type == ValueType::Signed {
                 let data_usize = mux_sig.get_data_usize();
@@ -1664,7 +1822,10 @@ impl MsgCodeGen<&DbcCodeGen> for Message {
                 None => {{}},
                 Some(callback) => {{
                     match callback.try_borrow() {{
-                        Err(_) => println!("fail to get message callback reference"),
+                        Err(_) => return Err(CanError::new(
+                            "message-callback-borrow",
+                            format!("canid:{{}} message callback already borrowed", self.id),
+                        )),
                         Ok(cb_ref) => cb_ref.msg_notification(self),
                     }}
                 }}
@@ -1963,6 +2124,9 @@ impl DbcParser {
         // sort message by canid
         dbcfd.messages.sort_by(|a, b| a.id.raw().cmp(&b.id.raw()));
 
+        validate_generated_message_identifiers(&dbcfd)?;
+        validate_signal_floating_point_values(&dbcfd)?;
+
         let outfd = match &self.outfile {
             Some(outfile) => {
                 let outfd = File::create(outfile.as_str())?;
@@ -2055,6 +2219,8 @@ use std::rc::{Rc};
                 r#"
 }}
 
+const CAN_IDS: [u32; {msg_count}] = {canids:?};
+
 pub struct CanMsgPool {{
     uid: &'static str,
     pool: [Rc<RefCell<Box<dyn CanDbcMessage>>>;{msg_count}],
@@ -2087,19 +2253,20 @@ impl CanDbcPool for CanMsgPool {{
     }}
 
     fn get_ids(&self) -> &[u32] {{
-        &{canids:?}
+        &CAN_IDS
     }}
 
     fn get_mut(&self, canid: u32) -> Result<RefMut<'_, Box<dyn CanDbcMessage>>, CanError> {{
-        let search= self.pool.binary_search_by(|msg| msg.borrow().get_id().cmp(&canid));
+        let search = CAN_IDS.binary_search(&canid);
         match search {{
-            Ok(idx) => {{
-                match self.pool[idx].try_borrow_mut() {{
-                    Err(_code) => Err(CanError::new("message-get_mut", "internal msg pool error")),
-                    Ok(mut_ref) => Ok(mut_ref),
-                }}
+            Ok(idx) => match self.pool[idx].try_borrow_mut() {{
+                Err(_code) => Err(CanError::new(
+                    "message-get_mut",
+                    format!("canid:{{}} message already mutably borrowed", canid),
+                )),
+                Ok(mut_ref) => Ok(mut_ref),
             }},
-            Err(_) => Err(CanError::new("fail-canid-search", format!("canid:{{}} not found",canid))),
+            Err(_) => Err(CanError::new("fail-canid-search", format!("canid:{{}} not found", canid))),
         }}
     }}
 
